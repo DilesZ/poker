@@ -607,3 +607,302 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- v0.3 Salas privadas (append, no rompe la mesa local) ---------- */
+
+.salas-lobby {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+  padding: 16px;
+  max-width: 1280px;
+  margin: 0 auto;
+  align-items: start;
+}
+
+.salas-error {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 1280px;
+  margin: 12px auto 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #3a1416;
+  border: 1px solid var(--red);
+  color: #ffd9d9;
+  font-size: 13px;
+}
+
+.salas-error strong {
+  font-size: 14px;
+  color: #fff;
+}
+
+.salas-error small {
+  color: #f0b9b9;
+}
+
+.salas-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.salas-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.salas-campo input,
+.salas-campo select {
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--panel-border);
+  background: #0e1512;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.salas-toggle {
+  display: flex;
+  gap: 8px;
+}
+
+.salas-opcion {
+  flex: 1;
+  background: #0e1512;
+  color: var(--text);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 9px 6px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.salas-opcion.activa {
+  background: var(--felt);
+  border-color: var(--felt-light);
+}
+
+.salas-cabecera {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.salas-cabecera h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.salas-botones {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.salas-jugadores {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.salas-jugador {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: center;
+  background: #0e1512;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.salas-asiento {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.salas-nombre {
+  font-weight: 700;
+}
+
+.salas-estado {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.salas-estado.on {
+  color: #7ee2a8;
+}
+
+.salas-estado.off {
+  color: #ff9d9d;
+}
+
+.salas-acciones {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 10px 0;
+}
+
+.salas-mesa {
+  position: relative;
+}
+
+.salas-info {
+  margin-top: 12px;
+}
+
+/* ---------- Banner de turno ---------- */
+
+.turn-banner {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin: 10px 0 0;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(245, 197, 24, 0.14);
+  border: 1px solid var(--gold);
+  color: var(--gold);
+  font-weight: 800;
+}
+
+.turn-banner.espera {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--panel-border);
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.turn-reloj {
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+}
+
+.turn-aviso {
+  color: #ff9d9d;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* ---------- Overlay de resultado de mano ---------- */
+
+.winner-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(4, 8, 6, 0.82);
+  border-radius: 24px;
+}
+
+.winner-card {
+  background: var(--panel);
+  border: 2px solid var(--gold);
+  border-radius: 14px;
+  padding: 18px 24px;
+  text-align: center;
+  max-width: 440px;
+  box-shadow: 0 12px 44px rgba(0, 0, 0, 0.65);
+}
+
+.winner-card h3 {
+  margin: 0 0 6px;
+  color: var(--gold);
+  font-size: 18px;
+}
+
+.winner-card p {
+  margin: 0 0 14px;
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.winner-botones {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* ---------- Diario del agente ---------- */
+
+.diary-panel h2 {
+  margin: 0 0 4px;
+}
+
+.diary-vacio {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 10px 0 0;
+}
+
+.diary-lista {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.diary-item {
+  background: #0e1512;
+  border: 1px solid var(--panel-border);
+  border-left: 3px solid var(--felt-light);
+  border-radius: 8px;
+  padding: 6px 9px;
+  font-size: 13px;
+}
+
+.diary-hora {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.diary-texto {
+  line-height: 1.45;
+}
+
+@media (max-width: 920px) {
+  .salas-lobby {
+    grid-template-columns: 1fr;
+  }
+
+  .salas-mesa .winner-overlay {
+    border-radius: 120px / 100px;
+  }
+
+  .turn-banner {
+    font-size: 14px;
+  }
+}
+
+.poker-nav{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}.poker-nav a{text-decoration:none}

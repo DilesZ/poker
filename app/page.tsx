@@ -22,6 +22,14 @@ export default function HomePage() {
       <header className="poker-header">
         <h1>♠ Poker Coach · 6-max vs IA</h1>
         <p>Texas Hold&apos;em estilo PokerStars con coach integrado.</p>
+        <nav className="poker-nav">
+          <a className="btn-ps btn-ps-call" href="/salas">
+            Jugar en sala privada con amigos
+          </a>
+          <a className="btn-ps btn-ps-ghost" href="/entrenar">
+            Entrenar agente
+          </a>
+        </nav>
       </header>
       <div className="poker-grid">
         <main>

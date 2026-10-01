@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.0] — 2026-10-02
+
+Salas privadas + agente tabula rasa:
+
+- `lib/rooms/`: roomEngine (acciones server-side, cierre de ronda, showdown, orquestación agente), store CAS por versión, memory (dev) + kv Upstash (prod, opcional por env), tests 15+9+11.
+- `app/api/rooms/*`: create/join/state(204 si version igual)/action/leave, `force-dynamic`. Turnos validados en servidor; si toca al agente actúa `chooseBrainAction`.
+- `lib/agent/`: brain.ts priors uniformes 0.5 + ε 0.9→0.1, epsilon-greedy puro SIN estrategia predefinida, reflectOnHand (+0.05/−0.04 clip, lección en español), reflection.ts, tests 4.
+- `app/salas` + `app/salas/[code]` + `components/rooms/AgentDiary`: crear/unirse por código, mesa remota polling 2s con banner de turno y overlay, diario del agente visible.
+- Smoke E2E real: sala 1v1 completa, derrota del agente → lección "bajé a 0.46 la prior de ir all-in en river".
+
+Verificado: `tsc` 0, `vitest` 54/54, `next build` 14 rutas. Ver `specs/checkpoint-20261002-v03-salas.md`.
+
+## [0.2.0] — 2026-10-01
+
+Self-play + SNG (legado, no participa en salas): `lib/training/` (regret tabular), `lib/tournament/` (7 niveles, payouts 65/35), `/entrenar`, `useTournamentStore`. 15 tests. Commits e7b381a/ed21113.
+
 ## [0.1.0] — 2026-10-01
 
 Engine + docs cerrados:

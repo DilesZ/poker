@@ -80,3 +80,10 @@ Texas Hold'em estilo PokerStars 6-max vs IA + aprendizaje, desplegado en Vercel 
   mano" y "Nuevo SNG". Sorteo uniforme simplificado, documentado en UI.
 - Aceptación: ciegas suben cada 8 manos; badges correctos al eliminar;
   `tsc --noEmit` 0 errores.
+
+## 10. Salas privadas + agente tabula rasa v0.3 (2026-10-02)
+
+- Salas: `lib/rooms/` (roomEngine, store CAS por version, memory dev / kv Upstash prod) + API `/api/rooms/*` force-dynamic. Crear/unirse por codigo, 1v1 o N+agente, mesa 2-6.
+- Agente: `lib/agent/brain.ts` SIN estrategia predefinida (prohibido importar lib/training o ai.ts): priors uniformes 0.5, epsilon 0.9 -> 0.1, epsilon-greedy, reflectOnHand tras cada showdown (+0.05/-0.04, Lesson en espanol).
+- UI: `/salas` (crear/unirse), `/salas/[code]` (polling 2s, banner turno, overlay), `AgentDiary` (ultimas 8 lecciones).
+- Aceptacion: tsc 0, vitest 54/54, build 14 rutas, smoke E2E real con leccion generada por derrota. Ver `specs/checkpoint-20261002-v03-salas.md`.
