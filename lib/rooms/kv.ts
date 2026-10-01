@@ -1,18 +1,26 @@
-// Persistencia opcional en Upstash Redis por REST (Vercel KV).
-// Sin KV_REST_API_URL/KV_REST_API_TOKEN queda desactivada y manda la memoria.
+// Persistencia opcional en Upstash Redis por REST (Vercel KV / Marketplace).
+// Acepta KV_REST_API_* (Vercel KV clásico) o UPSTASH_REDIS_REST_* (Marketplace).
+// Sin esas env queda desactivada y manda la memoria.
 import type { Room } from "./types";
 
 const PREFIJO = "room:";
 const TTL_SEGUNDOS = 24 * 60 * 60;
 
+function primeraEnv(...nombres: string[]): string | null {
+  for (const nombre of nombres) {
+    const valor = process.env[nombre];
+    if (valor && valor.trim()) return valor.trim();
+  }
+  return null;
+}
+
 function base(): string | null {
-  const url = process.env.KV_REST_API_URL;
-  return url && url.trim() ? url.replace(/\/+$/, "") : null;
+  const url = primeraEnv("KV_REST_API_URL", "UPSTASH_REDIS_REST_URL");
+  return url ? url.replace(/\/+$/, "") : null;
 }
 
 function token(): string | null {
-  const valor = process.env.KV_REST_API_TOKEN;
-  return valor && valor.trim() ? valor.trim() : null;
+  return primeraEnv("KV_REST_API_TOKEN", "UPSTASH_REDIS_REST_TOKEN");
 }
 
 export function kvConfigurado(): boolean {
