@@ -46,3 +46,20 @@ None — sin variables de entorno. Stats en localStorage, IA sin API externa.
 - [ ] v0.4 Coach: pot odds en vivo, equity Monte Carlo, feedback post-mano
 - [ ] v0.5 Aprendizaje: lecciones markdown, quizzes, hand review + historial V/D y tags
 - [ ] v1.0 Auth + persistencia + leaderboard
+
+## v0.2 — Entrenar + Torneo SNG (nuevo, sin romper la mesa)
+
+- **Entrenar** (`/entrenar`): `SelfPlayPanel` juega 1000 manos de la
+  estrategia contra sí misma en chunks de 50 (setTimeout, sin congelar la
+  UI). Motor determinista por seed: `runSelfPlay(nHands, seed, strategy)`
+  con rondas de apuesta, `decideWithStrategy` (push/fold por posición
+  <10bb, sizings 33/50/75%) y update por regret simple sobre la clase de
+  mano. Muestra progreso, winrate bb/100, showdown% y versión. **Honesto:
+  NO es GTO** (sin rangos balanceados, sin adaptación al rival). Botón
+  "Aplicar a IA mesa" guarda en localStorage (`poker-strategy`).
+- **Torneo** (`TournamentBar`, en `/entrenar`): SNG 6-max demo con niveles
+  de ciegas/ante cada 8 manos, tabla ordenada por fichas en BB y badges
+  Burbuja (3 vivos) / ITM (≤2) / Eliminado. Botón Nuevo SNG. Sorteo
+  simplificado, sin dinero real.
+- **Legal**: solo self-play local, sin dinero real, prohibido usar bots en
+  salas externas. La mesa existente (`/`) no se modifica.

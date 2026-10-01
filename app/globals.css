@@ -457,3 +457,153 @@ body {
     padding: 10px 14px;
   }
 }
+
+/* ---------- v0.2 Entrenar + Torneo (append, no rompe la mesa) ---------- */
+
+.train-panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.train-panel h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.train-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 10px 0;
+}
+
+.train-progress {
+  height: 12px;
+  border-radius: 999px;
+  background: #0e1512;
+  border: 1px solid var(--panel-border);
+  overflow: hidden;
+}
+
+.train-bar {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, var(--felt-light), var(--gold));
+  transition: width 120ms linear;
+}
+
+.train-stats {
+  margin: 10px 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.train-stats div {
+  background: #0e1512;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.train-stats dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.train-stats dd {
+  margin: 4px 0 0;
+  font-weight: 800;
+  font-size: 14px;
+}
+
+.train-ok {
+  color: #7ee2a8;
+  font-size: 13px;
+}
+
+.tourney-bar {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.tourney-bar h2 {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+
+.tourney-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.tourney-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+.tourney-table th,
+.tourney-table td {
+  border: 1px solid var(--panel-border);
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.tourney-table th {
+  background: #0e1512;
+}
+
+.tourney-table tr.out {
+  opacity: 0.5;
+}
+
+.badge-bubble,
+.badge-itm,
+.badge-out,
+.badge-hero {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.badge-bubble {
+  background: #4a3800;
+  border: 1px solid var(--gold);
+  color: #ffe9a8;
+}
+
+.badge-itm {
+  background: #0d4a26;
+  border: 1px solid #2ecc71;
+  color: #b9f5d0;
+}
+
+.badge-out {
+  background: #4a1414;
+  border: 1px solid var(--red);
+  color: #ffb3b3;
+}
+
+.badge-hero {
+  background: #1b3a6b;
+  border: 1px solid #5b8def;
+  color: #cfe0ff;
+}
+
+@media (max-width: 920px) {
+  .train-stats {
+    grid-template-columns: 1fr;
+  }
+}

@@ -47,3 +47,36 @@ Texas Hold'em estilo PokerStars 6-max vs IA + aprendizaje, desplegado en Vercel 
 - v0.3: IA (heurística por niveles + RNG seedable)
 - v0.4: coach (pot odds, equity Monte Carlo, feedback post-mano)
 - v0.5: aprendizaje (lecciones markdown, quizzes, hand review)
+
+## 8. Self-play v0.2 (entrenar, sin romper la mesa)
+
+- `lib/training/selfplay.ts`: `runSelfPlay(nHands, seed, strategy?)`
+  simula manos 6-max headless con RNG seeded (mulberry32, restaura
+  `Math.random`), sin mutar la estrategia de entrada. Rondas de apuesta
+  (hasta 3 pasadas/calle), `decideWithStrategy` (push/fold determinista
+  por umbral de posición con <10bb; si no, `getAiAction` + sizing según
+  `sizingWeights`), `showdown` del motor y reward en bb. Devuelve
+  `{ hands, winrateBB100, byPosition, showdownPct (0-1), experiences,
+  updatedStrategy }` con update de regret simple (LR 0.05) por mano.
+- `lib/training/strategy.ts`: `StrategyVersion` versionada (umbrales
+  push/fold por posición, 169 pesos de rango, sizings) con `migrate`,
+  `load/saveStrategy` en localStorage `poker-strategy` (SSR-safe).
+  `lib/training/experience.ts`: buffer de hasta 500 experiencias.
+- `components/training/SelfPlayPanel.tsx` (client): botón "Entrenar 1000
+  manos vs sí misma", chunks de 50 vía `setTimeout` (no congela UI), barra
+  de progreso, winrate bb/100, showdown%, versión y "Aplicar a IA mesa".
+- `app/entrenar/page.tsx`: compone panel + explicación honesta (qué
+  aprende y qué NO es GTO) + límites legales. No modifica `app/page.tsx`.
+- Aceptación: 1000 manos completan sin congelar; con 6 asientos iguales el
+  winrate ≈ 0 ± varianza; `tsc --noEmit` 0 errores.
+
+## 9. Torneos SNG v0.2 (demo local)
+
+- `lib/tournament/sng.ts`: 7 niveles (10/20 → 150/300+50), subida cada
+  `HANDS_PER_LEVEL = 8` manos, stack 1500, pagan 2.
+- `components/tournament/TournamentBar.tsx` (client, autocontenido, sin
+  store): nivel, ciegas/ante, manos para subir, tabla de 6 por fichas en
+  BB, badges Burbuja (3 vivos) / ITM (≤2) / Eliminado, botones "Jugar
+  mano" y "Nuevo SNG". Sorteo uniforme simplificado, documentado en UI.
+- Aceptación: ciegas suben cada 8 manos; badges correctos al eliminar;
+  `tsc --noEmit` 0 errores.
