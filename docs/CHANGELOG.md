@@ -36,3 +36,9 @@ Verificación: `npx tsc --noEmit` (0 errores), `npm test` (8/8).
   - `npm run typecheck` → 0 errores.
   - `npm test` → 8/8 passed (`lib/poker/evaluator.test.ts`).
   - `npm run build` → OK (Next 16.3.6 Turbopack, `Generating static pages (4/4)`, rutas `/`, `/_not-found`, `/api/health`).
+
+## 0.3.0 — Upstash KV (2026-10-02, posterior al push inicial)
+
+- Integración Marketplace `upstash/upstash-kv` → recurso `upstash-kv-purple-chair` conectado al proyecto `poker`; envs `KV_REST_API_URL`/`KV_REST_API_TOKEN` en Production/Preview/Development (+ aliases UPSTASH_* aceptados en kv.ts).
+- fix kv.ts: escritura `POST /` con array de comando `["SET",key,val,"EX",ttl]` y lectura vía campo `result` (el formato anterior no leía nunca); formato legado compatible. +4 tests kv (58/58 total).
+- E2E verificado: persistencia entre procesos locales (crear → matar proceso → recuperar) y en producción (sala creada en poker-flax-seven + leída directa de Upstash + state vía API). Deploy prod poker-5xc1tm169.

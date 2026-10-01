@@ -45,3 +45,10 @@ cada victoria/derrota mano tras mano.
   vive en salas.
 - lib/training/** (/entrenar) queda como legado, no participa en salas.
 - Polling 2s (sin WS); turnos validados server-side.
+
+
+## Ampliación 2026-10-02 — Upstash KV
+
+- Marketplace upstash/upstash-kv instalado (upstash-kv-purple-chair) y conectado al proyecto poker; envs KV_REST_API_* en los 3 entornos.
+- fix kv.ts formato REST Upstash (SET array en raiz, GET via result) + kv.test.ts (58/58).
+- Verificado: persistencia cross-process local y E2E en produccion (sala 0QV46X en KV). Deploy poker-5xc1tm169.
