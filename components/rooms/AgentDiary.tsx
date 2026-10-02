@@ -5,9 +5,19 @@ import { useEffect, useRef, useState } from "react";
 interface Entrada {
   hora: string;
   texto: string;
+  handId?: number;
 }
 
-const MAX_ENTRADAS = 8;
+const MAX_ENTRADAS = 20;
+
+function normalizarHandId(valor: unknown): number | undefined {
+  if (typeof valor === "number" && Number.isFinite(valor)) return Math.floor(valor);
+  if (typeof valor === "string" && valor.trim() !== "") {
+    const n = Number(valor);
+    if (Number.isFinite(n)) return Math.floor(n);
+  }
+  return undefined;
+}
 
 function claveDiario(code: string): string {
   return `agent-diary-${code}`;
@@ -120,30 +130,47 @@ function guardar(code: string, entradas: Entrada[]): void {
 export function AgentDiary({
   code,
   lesson,
+  handId,
 }: {
   code: string;
   lesson?: string;
+  handId?: number | string;
 }) {
   const [entradas, setEntradas] = useState<Entrada[]>(() => leer(code));
   const entradasRef = useRef<Entrada[]>(entradas);
 
+  const manoActual = normalizarHandId(handId);
+
   useEffect(() => {
     const nuevas = descomponer(lesson);
     if (nuevas.length === 0) return;
+    const hid = normalizarHandId(handId);
     let next = entradasRef.current;
     for (const texto of nuevas) {
       const ultima = next[next.length - 1];
       if (ultima && ultima.texto === texto) continue;
-      next = [...next, { hora: horaAhora(), texto }];
+      next = [...next, { hora: horaAhora(), texto, ...(hid !== undefined ? { handId: hid } : {}) }];
     }
     if (next.length > MAX_ENTRADAS) next = next.slice(-MAX_ENTRADAS);
     if (next === entradasRef.current) return;
     entradasRef.current = next;
     guardar(code, next);
     setEntradas(next);
-  }, [lesson, code]);
+  }, [lesson, code, handId]);
 
-  const inverso = [...entradas].reverse();
+  // No mostrar lección stale a recién llegados: si la última guardada
+  // difiere en >2 manos de la actual, se considera observando.
+  const ultimaMano = [...entradasRef.current].reverse().find((e) => e.handId !== undefined)?.handId;
+  const esStale =
+    manoActual !== undefined &&
+    ultimaMano !== undefined &&
+    Math.abs(manoActual - ultimaMano) > 2;
+
+  const visibles =
+    manoActual !== undefined
+      ? entradas.filter((e) => e.handId === undefined || Math.abs(manoActual - e.handId) <= 2)
+      : entradas;
+  const inverso = [...visibles].reverse();
 
   return (
     <section className="poker-panel diary-panel" aria-label="Diario del agente">
@@ -151,7 +178,9 @@ export function AgentDiary({
       <p className="poker-muted">
         El agente empieza sin estrategia y aprende de cada mano.
       </p>
-      {inverso.length === 0 ? (
+      {esStale ? (
+        <p className="diary-vacio">Agente observando...</p>
+      ) : inverso.length === 0 ? (
         <p className="diary-vacio">
           Sin lecciones todavía: la primera aparecerá cuando juegue sus manos en
           esta sala.

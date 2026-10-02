@@ -15,6 +15,8 @@ export function ActionBar() {
 
   const hero = game?.players[0] ?? null;
   const toCall = game && hero ? toCallFor(game, 0) : 0;
+  const pot = game?.pot ?? 0;
+  const heroStack = hero?.stack ?? 0;
   const canAct =
     !!game &&
     !!hero &&
@@ -33,7 +35,7 @@ export function ActionBar() {
         disabled={!canAct}
         onClick={heroFold}
       >
-        Fold
+        Retirarse (Fold)
       </button>
       <button
         type="button"
@@ -41,24 +43,59 @@ export function ActionBar() {
         disabled={!canAct}
         onClick={heroCallOrCheck}
       >
-        {toCall > 0 ? `Call ${toCall}` : "Check"}
+        {toCall > 0 ? `Igualar (Call) ${toCall}` : "Pasar (Check)"}
       </button>
+      <label className="poker-raise-label" htmlFor="raise-amount">
+        Subir (Raise)
+      </label>
       <input
+        id="raise-amount"
         type="number"
         className="poker-raise-input"
         aria-label="Cantidad a subir"
         min={1}
+        max={heroStack}
+        step={10}
         value={raiseAmount}
         disabled={!canAct}
         onChange={(e) => setRaiseAmount(Number(e.target.value))}
       />
+      <span className="poker-quick">
+        <button
+          type="button"
+          className="btn-ps btn-small"
+          disabled={!canAct}
+          onClick={() => setRaiseAmount(Math.floor(pot / 2))}
+          title="Apostar medio bote"
+        >
+          ½ Pot
+        </button>
+        <button
+          type="button"
+          className="btn-ps btn-small"
+          disabled={!canAct}
+          onClick={() => setRaiseAmount(pot)}
+          title="Apostar el bote completo"
+        >
+          Pot
+        </button>
+        <button
+          type="button"
+          className="btn-ps btn-small"
+          disabled={!canAct}
+          onClick={() => setRaiseAmount(heroStack)}
+          title="Apostar todo el stack"
+        >
+          All-in
+        </button>
+      </span>
       <button
         type="button"
         className="btn-ps btn-raise"
         disabled={!canAct}
         onClick={heroBet}
       >
-        Raise
+        Subir (Raise)
       </button>
       <button
         type="button"
@@ -72,7 +109,7 @@ export function ActionBar() {
         Nueva mano
       </button>
       {game && (
-        <span className="poker-odds">
+        <span className="poker-odds" aria-live="polite">
           Pot odds: {(odds * 100).toFixed(1)}% · Bote {game.pot} · A igualar{" "}
           {toCall}
         </span>

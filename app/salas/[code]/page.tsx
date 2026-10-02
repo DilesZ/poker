@@ -437,6 +437,9 @@ export default function SalaPage() {
     }
   }, [code, clientId, aplicar, enviar]);
 
+  // Arranque separado: solo join (POST) + primer GET. No hay POST /tick;
+  // si existiera tick, solo se llamaría cuando hiciera falta arrancar,
+  // nunca en cada GET de polling.
   useEffect(() => {
     if (!code) return;
     let cancelado = false;
@@ -475,18 +478,29 @@ export default function SalaPage() {
     };
   }, [code, aplicar]);
 
-  useEffect(() => {
-    if (!code || !clientId) return;
-    const id = window.setInterval(() => {
-      void refetch();
-    }, 2000);
-    return () => window.clearInterval(id);
-  }, [code, clientId, refetch]);
-
   const esMiTurno =
     !!vista &&
     vista.actingSeat !== undefined &&
     vista.actingSeat === vista.yourSeat;
+  const estaManoTerminada = vista?.handOver === true;
+
+  // Polling adaptativo + pausa en pestaña oculta.
+  useEffect(() => {
+    if (!code || !clientId) return;
+    const ms = estaManoTerminada ? 5000 : esMiTurno ? 800 : 2000;
+    const id = window.setInterval(() => {
+      if (document.hidden) return;
+      void refetch();
+    }, ms);
+    const alVisibilidad = () => {
+      if (!document.hidden) void refetch();
+    };
+    document.addEventListener("visibilitychange", alVisibilidad);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", alVisibilidad);
+    };
+  }, [code, clientId, refetch, esMiTurno, estaManoTerminada]);
   const version = vista?.version;
 
   useEffect(() => {
@@ -744,7 +758,7 @@ export default function SalaPage() {
         </main>
 
         <aside className="poker-sidebar">
-          <AgentDiary key={code} code={code} lesson={vista?.agentLesson} />
+          <AgentDiary key={code} code={code} lesson={vista?.agentLesson} handId={vista?.version} />
           <RegistroSala lineas={lineas} />
         </aside>
       </div>

@@ -17,15 +17,22 @@ export default function Seat({
   style?: CSSProperties;
 }) {
   const visible = player.isHero || showCards;
+  const groupLabel = `${player.isHero ? "Hero (tú)" : player.name} — Stack ${player.stack}, apuesta ${player.bet}${player.folded ? ", foldeado" : ""}${highlight ? ", ganador" : ""}`;
   return (
     <div
       className={`poker-seat${player.isHero ? " hero" : ""}${player.folded ? " folded" : ""}${highlight ? " winner" : ""}`}
       style={style}
+      role="group"
+      aria-label={groupLabel}
     >
       <div className="poker-seat-name">
         {player.isHero ? "Hero (tú)" : player.name}
         {isDealer && (
-          <span className="poker-dealer" title="Botón">
+          <span
+            className="poker-dealer"
+            title="Botón dealer"
+            aria-label="Botón dealer"
+          >
             D
           </span>
         )}
@@ -49,6 +56,11 @@ export default function Seat({
       {player.folded && <div className="poker-folded">Fold</div>}
       {player.allIn && !player.folded && (
         <div className="poker-allin">ALL-IN</div>
+      )}
+      {highlight && (
+        <div className="poker-winner" aria-label="Ganador de la mano">
+          🏆 Ganador
+        </div>
       )}
     </div>
   );

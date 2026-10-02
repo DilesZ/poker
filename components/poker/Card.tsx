@@ -14,6 +14,21 @@ function isRedSuit(suit: EngineCard["suit"]): boolean {
   return suit === "♥" || suit === "♦";
 }
 
+function suitEs(suit: EngineCard["suit"]): string {
+  if (suit === "♠") return "picas";
+  if (suit === "♥") return "corazones";
+  if (suit === "♦") return "diamantes";
+  return "tréboles";
+}
+
+function rankEs(rank: Rank): string {
+  if (rank === 11) return "Jota";
+  if (rank === 12) return "Reina";
+  if (rank === 13) return "Rey";
+  if (rank === 14) return "As";
+  return String(rank);
+}
+
 export default function Card({
   card,
   faceDown = false,
@@ -29,7 +44,7 @@ export default function Card({
         className={`poker-card back${small ? " small" : ""}`}
         aria-label="Carta oculta"
       >
-        <span>♠</span>
+        <span aria-hidden="true">◍</span>
       </div>
     );
   }
@@ -38,7 +53,7 @@ export default function Card({
   return (
     <div
       className={`poker-card${small ? " small" : ""}${red ? " red" : ""}`}
-      aria-label={`${label} de ${card.suit}`}
+      aria-label={`${rankEs(card.rank)} de ${suitEs(card.suit)}`}
     >
       <span className="poker-card-rank">{label}</span>
       <span className="poker-card-suit">{card.suit}</span>

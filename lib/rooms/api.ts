@@ -213,6 +213,22 @@ export async function respuestaAccion(
     return error(404, "No estás en esta sala.");
   }
 
+  // Validación semántica previa (sin mutar): raise mínimo 400, check/call 409.
+  if (accion.type !== "nextStreet" && enJuego(room0)) {
+    const jugador0 = room0.players.find((p) => p.clientId === clientId);
+    const e0 = estadoDe(room0);
+    const enMesa0 = e0.players.find((p) => p.id === jugador0?.seat);
+    if (enMesa0) {
+      const toCall0 = Math.max(0, e0.currentBet - enMesa0.bet);
+      const semantico = validarAccionLegal(
+        accion,
+        { currentBet: e0.currentBet, bigBlind: e0.bigBlind ?? 20 },
+        toCall0,
+      );
+      if (semantico) return error(semantico.codigo, semantico.mensaje);
+    }
+  }
+
   const fallo = { codigo: 400, mensaje: "" };
   const r = await actualizarSala(code, room0.version, (room) => {
     const jugador = room.players.find((p) => p.clientId === clientId);
@@ -288,6 +304,46 @@ function leerAccion(bruto: unknown): AccionSala | null {
   if (size === undefined) return { type: type as AccionSala["type"] };
   if (typeof size !== "number" || !Number.isFinite(size) || size < 1) return null;
   return { type: type as AccionSala["type"], size: Math.floor(size) };
+}
+
+/** Subida mínima «a X»: apuesta actual + ciega grande. */
+function subidaMinima(state: { currentBet: number; bigBlind: number }): number {
+  return state.currentBet + state.bigBlind;
+}
+
+/**
+ * Valida la semántica de la acción contra el estado (sin mutar).
+ * Devuelve null si es legal; si no, código HTTP y mensaje claro.
+ * - raise con size < minRaise (currentBet+BB) → 400 (en vez de clamp).
+ * - check solo si toCall==0, call solo si toCall>0 → 409 si no.
+ */
+export function validarAccionLegal(
+  accion: AccionSala,
+  estado: { currentBet: number; bigBlind: number },
+  toCall: number,
+): { codigo: number; mensaje: string } | null {
+  if (accion.type === "check" && toCall > 0) {
+    return {
+      codigo: 409,
+      mensaje: `No puedes pasar: hay ${toCall} por igualar, usa call o fold.`,
+    };
+  }
+  if (accion.type === "call" && toCall <= 0) {
+    return {
+      codigo: 409,
+      mensaje: "No hay nada que igualar: usa check.",
+    };
+  }
+  if (accion.type === "raise" && accion.size !== undefined) {
+    const min = subidaMinima(estado);
+    if (accion.size < min) {
+      return {
+        codigo: 400,
+        mensaje: `Subida mínima a ${min}.`,
+      };
+    }
+  }
+  return null;
 }
 
 async function codigoLibre(): Promise<string> {

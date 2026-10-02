@@ -24,6 +24,8 @@ export interface Brain {
   priors: Record<string, number>;
   beliefs: string[];
   epsilon: number;
+  /** Contador por clave de situación (ej. "flop/hasPot/HU" → manos vistas). */
+  counts?: Record<string, number>;
 }
 
 export type BrainAction = { type: "fold" | "check" | "call" | "raise" | "allin"; size?: number };
@@ -43,6 +45,8 @@ export interface BrainContext {
   toCall: number;
   /** Reservado: no influye en la decisión (sería estrategia predefinida). */
   handRankApprox?: number;
+  /** Rivales en la mano (para distinguir HU vs multi). */
+  numRivales?: number;
 }
 
 export interface HandRecord {
@@ -54,6 +58,8 @@ export interface HandRecord {
   showdown: boolean;
   potWon: number;
   stackDelta: number;
+  /** Rivales en la mano (HU vs multi); ausente en registros viejos. */
+  numRivales?: number;
 }
 
 const SUBIDA = 0.05;
@@ -66,6 +72,8 @@ const UMBRALES_EPSILON = [0.5, 0.3, 0.2, 0.1];
 const CALLES = ["preflop", "flop", "turn", "river"] as const;
 const CUBOS = ["toCall0", "hasPot"] as const;
 const TIPOS = ["fold", "check", "call", "raise", "allin"] as const;
+const RIVALES = ["HU", "multi"] as const;
+const MAX_LESSONS = 100;
 
 const VERBOS: Record<BrainAction["type"], string> = {
   fold: "retirarme",
@@ -81,7 +89,11 @@ export function createBrain(): Brain {
   for (const calle of CALLES) {
     for (const cubo of CUBOS) {
       for (const tipo of TIPOS) {
+        // Clave vieja (compat): sin sufijo de rivales.
         priors[`${calle}/${cubo}/${tipo}`] = 0.5;
+        for (const rival of RIVALES) {
+          priors[`${calle}/${cubo}/${rival}/${tipo}`] = 0.5;
+        }
       }
     }
   }
@@ -91,6 +103,7 @@ export function createBrain(): Brain {
     priors,
     beliefs: ["estoy aprendiendo"],
     epsilon: 0.9,
+    counts: {},
   };
 }
 
@@ -138,7 +151,7 @@ export function reflectOnHand(
   let cambio = 0;
   if (parseo) {
     const priorKey = `${clave}/${parseo.tipo}`;
-    anterior = priors[priorKey] ?? 0.5;
+    anterior = priorConFallback(priors, clave, parseo.tipo);
     nuevo = limitar(
       redondear(anterior + (record.won ? SUBIDA : -BAJADA)),
       PRIOR_MIN,
@@ -148,9 +161,9 @@ export function reflectOnHand(
     priors[priorKey] = nuevo;
   }
 
-  const epsilon = Math.max(EPSILON_MIN, redondear(epsilonAntes * EPSILON_DECAY, 6));
+  let epsilon = Math.max(EPSILON_MIN, redondear(epsilonAntes * EPSILON_DECAY, 6));
   const handsPlayed = brain.handsPlayed + 1;
-  const lessons = [...brain.lessons];
+  const lessonsAcum = [...brain.lessons];
 
   const primeraMano = brain.handsPlayed === 0;
   const cruzoUmbral = UMBRALES_EPSILON.some((t) => epsilonAntes > t && epsilon <= t);
@@ -165,7 +178,20 @@ export function reflectOnHand(
       nuevo,
       handsPlayed,
     });
-    lessons.push(lesson);
+    lessonsAcum.push(lesson);
+  }
+  // Capa lecciones a las últimas 100.
+  const lessons = lessonsAcum.slice(-MAX_LESSONS);
+
+  // Contador por situación.
+  const counts: Record<string, number> = { ...(brain.counts ?? {}) };
+  counts[clave] = (counts[clave] ?? 0) + 1;
+
+  // Re-anneal simple: si lleva muchas manos y gana poco, re-explora.
+  if (handsPlayed > 110 && lessons.length > 0) {
+    const victorias = lessons.filter((l) => l.outcome === "victoria").length;
+    const winrate = victorias / lessons.length;
+    if (winrate < 0.4) epsilon = Math.max(0.15, epsilon);
   }
 
   const beliefs =
@@ -174,9 +200,28 @@ export function reflectOnHand(
       : brain.beliefs;
 
   return {
-    brain: { handsPlayed, lessons, priors, beliefs, epsilon },
+    brain: { handsPlayed, lessons, priors, beliefs, epsilon, counts },
     lesson,
   };
+}
+
+/** Prior con compat: prueba clave nueva (HU/multi) y cae a vieja y a 0.5. */
+function priorConFallback(
+  priors: Record<string, number>,
+  clave: string,
+  tipo: BrainAction["type"],
+): number {
+  const directa = priors[`${clave}/${tipo}`];
+  if (directa !== undefined) return directa;
+  const partes = clave.split("/");
+  if (
+    partes.length === 3 &&
+    (partes[2] === "HU" || partes[2] === "multi")
+  ) {
+    const vieja = priors[`${partes[0]}/${partes[1]}/${tipo}`];
+    if (vieja !== undefined) return vieja;
+  }
+  return 0.5;
 }
 
 /** Prior de la acción en la clave, 0.5 si aún no se ha visto. */
@@ -186,7 +231,7 @@ function priorEvaluado(
   accion: BrainAction,
   legal: BrainLegal,
 ): number {
-  const prior = brain.priors[`${clave}/${accion.type}`] ?? 0.5;
+  const prior = priorConFallback(brain.priors, clave, accion.type);
   if (accion.type === "call" && legal.toCall > 0) {
     const precio = potOdds(legal.toCall, legal.pot);
     // Si el prior aprendido no cubre el precio, el call deja de competir.

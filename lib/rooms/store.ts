@@ -1,6 +1,7 @@
 // Fachada de persistencia de salas: memoria en proceso (+ KV REST si hay env).
 // `actualizarSala` hace CAS por versión con reintentos; `modificarSala` es la
-// variante sin versión conocida (alta de sala, unión) con lectura-escritura directa.
+// variante sin versión conocida con CAS optimista (lee versión, intenta
+// actualizarSala, reintenta 3 veces).
 import { kvConfigurado, kvEscribir, kvLeer } from "./kv";
 import { memoriaEscribir, memoriaLeer } from "./memory";
 import type { Room } from "./types";
@@ -10,6 +11,19 @@ export type Actualizacion =
   | { estado: "sin-sala" }
   | { estado: "rechazado" }
   | { estado: "conflicto" };
+
+/** Validador básico de forma de sala (code, players array, brain.priors). */
+export function isRoomShape(valor: unknown): valor is Room {
+  if (!valor || typeof valor !== "object") return false;
+  const r = valor as Record<string, unknown>;
+  if (typeof r.code !== "string" || r.code.length === 0) return false;
+  if (!Array.isArray(r.players)) return false;
+  const brain = r.brain as Record<string, unknown> | null | undefined;
+  if (!brain || typeof brain !== "object") return false;
+  const priors = (brain as Record<string, unknown>).priors;
+  if (!priors || typeof priors !== "object" || Array.isArray(priors)) return false;
+  return true;
+}
 
 export async function cargarSala(code: string): Promise<Room | null> {
   if (kvConfigurado()) {
@@ -58,16 +72,27 @@ export async function actualizarSala(
 }
 
 /** Igual que actualizarSala sin versión previa: parte de la última leída. */
+// CAS optimista: lee versión, intenta actualizarSala, reintenta 3 veces.
 export async function modificarSala(
   code: string,
   mutador: (room: Room) => Room | null,
+  reintentos = 3,
 ): Promise<Actualizacion> {
-  const room = await cargarSala(code);
-  if (!room) return { estado: "sin-sala" };
-  const mutado = mutador(room);
-  if (!mutado) return { estado: "rechazado" };
-  await guardarSala(sellar(mutado, room.version + 1));
-  return { estado: "ok", room: mutado };
+  for (let intento = 0; intento < reintentos; intento++) {
+    const room = await cargarSala(code);
+    if (!room) return { estado: "sin-sala" };
+    if (!isRoomShape(room)) return { estado: "sin-sala" };
+    const version = room.version;
+    // Un solo intento por vuelta; si hay conflicto, relee y reintenta.
+    const r = await actualizarSala(code, version, mutador, 1);
+    if (r.estado === "conflicto") continue;
+    // actualizarSala con reintentos=1 devuelve conflicto si la versión cambió
+    // entre nuestra lectura y la suya; también puede devolver ok/rechazado/sin-sala.
+    // Para el caso borde donde actualizarSala recargó y avanzó versión interna,
+    // tratamos ok como éxito y cualquier otro como resultado final salvo conflicto.
+    return r;
+  }
+  return { estado: "conflicto" };
 }
 
 function sellar(room: Room, version: number): Room {

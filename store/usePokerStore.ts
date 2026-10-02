@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { getAiAction } from "../lib/poker/ai";
-import { CATEGORY_NAMES } from "../lib/poker/evaluator";
+import { CATEGORY_NAMES, evaluate7 } from "../lib/poker/evaluator";
 import {
   advanceStreet,
   deal,
@@ -88,37 +88,76 @@ function winnerLabel(g: GameState, ids: number[]): string {
   return ids.map((id) => g.players[id]?.name ?? `#${id}`).join(", ");
 }
 
+/** Fuerza 0-1 de una mano: preflop heurístico, postflop con el evaluador. */
+function estimateStrength(hole: Card[], board: Card[]): number {
+  const clamp = (x: number): number => Math.min(1, Math.max(0, x));
+  if (hole.length !== 2) return 0.5;
+  // Preflop (board < 3): pareja alta 0.75-0.90, suited +0.06, conectores, Ax.
+  if (board.length < 3) {
+    const [c1, c2] = hole as [Card, Card];
+    const high = Math.max(c1.rank, c2.rank);
+    const low = Math.min(c1.rank, c2.rank);
+    if (c1.rank === c2.rank) {
+      // 22 ≈ 0.56 … AA = 0.90; J+ siempre ≥ 0.75.
+      return clamp(Math.max(high >= 11 ? 0.75 : 0, 0.5 + (high / 14) * 0.4));
+    }
+    let s = 0.25 + (high / 14) * 0.3 + (low / 14) * 0.1;
+    if (c1.suit === c2.suit) s += 0.06;
+    const gap = high - low;
+    if (gap === 1) s += 0.05;
+    else if (gap === 2) s += 0.03;
+    else if (gap >= 5) s -= 0.05;
+    if (high === 14) s += 0.05;
+    if (high >= 12 && low >= 10) s += 0.04;
+    return clamp(s);
+  }
+  // Postflop con 5+ cartas totales: categoría normalizada (0-8 → 0-1).
+  if (hole.length + board.length >= 5) {
+    try {
+      const r = evaluate7([...hole, ...board]);
+      return clamp(r.category / 8 + (r.tiebreak[0] ?? 0) / 1000);
+    } catch {
+      return 0.5;
+    }
+  }
+  return 0.5;
+}
+
 /** Los 5 villanos responden con la IA heurística. Mutación sobre `g`. */
 function playVillains(g: GameState, log: string[]): void {
   for (const v of g.players) {
     if (v.id === 0 || v.folded || v.allIn) continue;
     const call = Math.max(0, g.currentBet - v.bet);
-    // Fuerza sintética: la IA real evaluaría su mano contra la mesa.
-    const strength = 0.25 + Math.random() * 0.6;
+    // Fuerza real: evaluator + heurística preflop, con bonus de posición.
+    const pos = (v.id - g.button + 6) % 6;
+    const posBonus = pos >= 4 ? 0.03 : pos === 0 ? -0.02 : 0;
+    const base = estimateStrength(v.hole, g.board);
+    const strength = Math.min(1, Math.max(0, base + posBonus));
+    const eq = strength.toFixed(2);
     const decision = getAiAction(strength, call, g.pot, v.stack, BIG_BLIND);
     if (decision.action === "fold") {
       v.folded = true;
-      log.push(`${v.name} foldea.`);
+      log.push(`${v.name} foldea (eq:${eq}).`);
     } else if (decision.action === "check") {
-      log.push(`${v.name} pasa.`);
+      log.push(`${v.name} pasa (eq:${eq}).`);
     } else if (decision.action === "call") {
       const pay = Math.min(v.stack, decision.amount);
       v.stack -= pay;
       v.bet += pay;
       if (v.stack === 0) v.allIn = true;
-      log.push(`${v.name} iguala ${pay}.`);
+      log.push(`${v.name} iguala ${pay} (eq:${eq}).`);
     } else if (decision.action === "bet") {
       const pay = Math.min(v.stack, call + decision.amount);
       v.stack -= pay;
       v.bet += pay;
       if (v.stack === 0) v.allIn = true;
-      log.push(`${v.name} sube a ${v.bet} (+${pay}).`);
+      log.push(`${v.name} sube a ${v.bet} (+${pay}, eq:${eq}).`);
     } else {
       const pay = v.stack;
       v.stack = 0;
       v.bet += pay;
       v.allIn = true;
-      log.push(`${v.name} va ALL-IN (${v.bet}).`);
+      log.push(`${v.name} va ALL-IN (${v.bet}, eq:${eq}).`);
     }
   }
   refreshPot(g);

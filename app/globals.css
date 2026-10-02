@@ -905,4 +905,158 @@ body {
   }
 }
 
-.poker-nav{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}.poker-nav a{text-decoration:none}
+.poker-nav{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;justify-content:center}.poker-nav a{text-decoration:none}
+
+/* ---------- Pulido UI a11y (append, no rompe lógica) ---------- */
+
+body {
+  overflow-x: clip;
+}
+
+:focus-visible {
+  outline: 3px solid var(--gold);
+  outline-offset: 2px;
+}
+
+/* Alias compat para clases antiguas */
+.btn-ps-call {
+  background: var(--blue);
+}
+
+.btn-ps-ghost {
+  background: #0e1512;
+  border: 1px solid var(--panel-border);
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+/* Números tabulares en stacks/pot */
+.poker-pot,
+.poker-seat-stack,
+.poker-chip,
+.poker-hud dd,
+.poker-odds,
+.turn-reloj {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Asiento activo: anillo dorado + pulse */
+.poker-seat.active {
+  border-color: var(--gold);
+  box-shadow:
+    0 0 0 3px rgba(245, 197, 24, 0.55),
+    0 0 16px rgba(245, 197, 24, 0.45);
+  animation: seat-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes seat-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 2px rgba(245, 197, 24, 0.45),
+      0 0 10px rgba(245, 197, 24, 0.3);
+  }
+  50% {
+    box-shadow:
+      0 0 0 4px rgba(245, 197, 24, 0.7),
+      0 0 20px rgba(245, 197, 24, 0.55);
+  }
+}
+
+/* Contraste folded/winner */
+.poker-seat.folded {
+  filter: grayscale(1);
+}
+
+.poker-seat.winner {
+  filter: none;
+  outline: 3px solid var(--gold);
+  outline-offset: 2px;
+}
+
+.poker-winner {
+  color: var(--gold);
+  font-weight: 800;
+}
+
+/* ActionBar: targets táctiles + label raise */
+.poker-actionbar .btn-ps,
+.poker-raise-input {
+  min-height: 44px;
+}
+
+.poker-raise-label {
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.poker-quick {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+/* Placeholders de board + skeleton */
+.poker-card.placeholder {
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px dashed rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.8);
+  box-shadow: none;
+  font-weight: 700;
+}
+
+.poker-skeleton {
+  border-radius: 8px;
+  background: linear-gradient(90deg, #0e1512 25%, #1c2823 50%, #0e1512 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s linear infinite;
+  color: transparent;
+}
+
+@keyframes skeleton-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* Log coloreado por verbo */
+.log-fold {
+  color: #9aa7b0;
+}
+.log-call {
+  color: #7ee2a8;
+}
+.log-raise {
+  color: #ff8a8a;
+}
+.log-win {
+  color: var(--gold);
+  font-weight: 700;
+}
+
+@media (max-width: 920px) {
+  .poker-actionbar {
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    background: rgba(10, 15, 13, 0.96);
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+    padding: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

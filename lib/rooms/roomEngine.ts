@@ -27,7 +27,12 @@ export interface EstadoSalas extends GameState {
   reflejada?: boolean;
   iniciada?: boolean;
   showdownFinal?: boolean;
+  /** Límite de turno (ms epoch). Se renueva al cambiar el turno. */
+  deadlineActing?: number;
 }
+
+/** Ventana de turno: 30s por decisión. */
+export const TURNO_MS = 30000;
 
 export type AccionSala = {
   type: "fold" | "check" | "call" | "raise" | "allin" | "nextStreet";
@@ -126,8 +131,26 @@ export function iniciarMano(room: Room): void {
   postearCiegas(nuevo);
   deal(nuevo);
   nuevo.iniciada = true;
+  nuevo.deadlineActing = Date.now() + TURNO_MS;
   room.state = nuevo;
   room.lesson = undefined;
+}
+
+/** ¿Expiró el turno actual? True si Date.now() supera deadlineActing con mano viva. */
+export function isTurnExpired(room: Room): boolean {
+  const e = estadoDe(room);
+  if (e.iniciada !== true || e.street === "done") return false;
+  if (typeof e.deadlineActing !== "number") return false;
+  return Date.now() > e.deadlineActing;
+}
+
+/** Renueva el límite de turno si la mano sigue viva; lo limpia al cerrar. */
+function tocarDeadline(e: EstadoSalas): void {
+  if (e.iniciada === true && e.street !== "done" && calcularActingSeat(e) !== undefined) {
+    e.deadlineActing = Date.now() + TURNO_MS;
+  } else {
+    e.deadlineActing = undefined;
+  }
 }
 
 /** Asiento que debe actuar; undefined si la calle/mano ya cerró. */
@@ -206,6 +229,7 @@ export function reflejar(room: Room): string | undefined {
   const historial = e.historial ?? [];
   const ultima = historial[historial.length - 1];
   const delta = agente.stack - (e.stackInicioAgente ?? agente.stack);
+  const numRivales = Math.max(0, e.players.length - 1);
   const registro = buildHandRecord({
     won: delta > 0,
     myCards: agente.hole.map(cartaCorta).join(" "),
@@ -215,6 +239,7 @@ export function reflejar(room: Room): string | undefined {
     showdown: e.showdownFinal === true,
     potWon: Math.max(0, delta + agente.bet),
     stackDelta: delta,
+    numRivales,
   });
   const resultado = reflectOnHand(room.brain, registro);
   room.brain = resultado.brain;
@@ -232,16 +257,38 @@ export function reflejar(room: Room): string | undefined {
 export function ejecutarAccion(room: Room, seat: number, accion: AccionSala): ResultadoSala {
   const e = estadoDe(room);
   if (accion.type === "nextStreet") {
+    // Solo participantes pueden avanzar/repartir.
+    if (!room.players.some((p) => p.seat === seat)) {
+      return fallo(e, "Solo los participantes pueden avanzar la mano.");
+    }
     if (e.iniciada === true && e.street !== "done") return fallo(e, "La mano sigue en juego.");
     if (room.players.length >= minimoJugadores(room.maxPlayers)) {
       iniciarMano(room);
       jugarAgente(room);
       reflejar(room);
+      tocarDeadline(estadoDe(room));
     }
     return okSala(room);
   }
   if (e.iniciada !== true) return fallo(e, "La mano todavía no ha empezado.");
   if (e.street === "done") return fallo(e, "La mano ya ha terminado.");
+  // Expiración: auto-fold del asiento que debía actuar (vía aplicarUna).
+  if (isTurnExpired(room)) {
+    const expirado = calcularActingSeat(e);
+    const jugExp = e.players.find((p) => p.id === expirado);
+    if (expirado !== undefined && jugExp) {
+      aplicarUna(e, jugExp, { type: "fold" });
+      refreshPot(e);
+      resolverCierre(e);
+      jugarAgente(room);
+      reflejar(room);
+      tocarDeadline(e);
+      // Si el expirado ya se resolvió, la acción tardía no se aplica.
+      if (expirado === seat) return okSala(room);
+      // Si le toca al solicitante tras el auto-fold, sigue el flujo normal.
+      if (calcularActingSeat(e) !== seat) return okSala(room);
+    }
+  }
   if (calcularActingSeat(e) === e.agentSeat) {
     jugarAgente(room);
     if (estadoDe(room).street === "done") return okSala(room);
@@ -250,6 +297,7 @@ export function ejecutarAccion(room: Room, seat: number, accion: AccionSala): Re
   aplicarAccion(e, seat, accion);
   jugarAgente(room);
   reflejar(room);
+  tocarDeadline(e);
   return okSala(room);
 }
 
@@ -426,12 +474,14 @@ function legales(e: EstadoSalas, p: PlayerState): BrainLegal {
 }
 
 function contexto(e: EstadoSalas, p: PlayerState): BrainContext {
+  const rivales = e.players.filter((x) => !x.folded && x.id !== p.id).length;
   return {
     street: e.street,
     boardLen: e.board.length,
     myStack: p.stack,
     pot: e.pot,
     toCall: Math.max(0, e.currentBet - p.bet),
+    numRivales: rivales,
   };
 }
 

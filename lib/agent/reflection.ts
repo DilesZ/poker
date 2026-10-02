@@ -9,11 +9,15 @@ export type Cubo = "toCall0" | "hasPot";
 
 const CUBOS: readonly Cubo[] = ["toCall0", "hasPot"];
 const CALLES = ["preflop", "flop", "turn", "river"] as const;
+const RIVALES = ["HU", "multi"] as const;
 
-/** Ruleta: las 8 claves de situación posibles del cerebro. */
-export const RULETA_SITUACIONES: readonly string[] = CALLES.flatMap((calle) =>
-  CUBOS.map((cubo) => `${calle}/${cubo}`),
-);
+/** Ruleta: 8 claves base (compat) + 16 con rivales (HU/multi). */
+export const RULETA_SITUACIONES: readonly string[] = [
+  ...CALLES.flatMap((calle) => CUBOS.map((cubo) => `${calle}/${cubo}`)),
+  ...CALLES.flatMap((calle) =>
+    CUBOS.flatMap((cubo) => RIVALES.map((r) => `${calle}/${cubo}/${r}`)),
+  ),
+];
 
 const TIPOS: readonly BrainAction["type"][] = ["fold", "check", "call", "raise", "allin"];
 
@@ -36,6 +40,8 @@ export interface HandRecordInput {
   showdown?: boolean;
   potWon?: number;
   stackDelta?: number;
+  /** Rivales en la mano (para clave HU/multi). */
+  numRivales?: number;
 }
 
 /** Normaliza una mano cruda a HandRecord con acciones legibles ("call 60"). */
@@ -54,7 +60,14 @@ export function buildHandRecord(datos: HandRecordInput): HandRecord {
     showdown: datos.showdown ?? false,
     potWon: datos.potWon ?? 0,
     stackDelta: datos.stackDelta ?? 0,
+    ...(typeof datos.numRivales === "number" ? { numRivales: datos.numRivales } : {}),
   };
+}
+
+/** Sufijo de rivales: "" (compat, sin dato), "/HU" (≤1 rival) o "/multi". */
+function sufijoRivales(numRivales?: number): string {
+  if (typeof numRivales !== "number") return "";
+  return numRivales <= 1 ? "/HU" : "/multi";
 }
 
 /** Clave de situación desde el registro: última decisión + su cubo de precio. */
@@ -64,16 +77,17 @@ export function claveSituacion(record: HandRecord): string {
   );
   const ultima = historial[historial.length - 1];
   const calle = normalizarCalle(ultima?.street ?? record.street);
-  if (!ultima) return `${calle}/toCall0`;
+  const sufijo = sufijoRivales(record.numRivales);
+  if (!ultima) return `${calle}/toCall0${sufijo}`;
   const enCalle = historial.filter((a) => a.street === ultima.street);
-  return `${calle}/${cuboDe(enCalle)}`;
+  return `${calle}/${cuboDe(enCalle)}${sufijo}`;
 }
 
 /** Clave de situación en caliente: mismo cubo, derivado del precio enfrentado. */
 export function claveDesdeContexto(ctx: BrainContext): string {
   const calle = normalizarCalle(ctx.street);
   const cubo: Cubo = ctx.toCall > 0 ? "hasPot" : "toCall0";
-  return `${calle}/${cubo}`;
+  return `${calle}/${cubo}${sufijoRivales(ctx.numRivales)}`;
 }
 
 /** Parsea una acción registrada ("raise 120 (precio 40)") a tipo e importe. */

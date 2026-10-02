@@ -38,11 +38,25 @@ async function pedir(ruta: string, cuerpo?: string): Promise<Response | null> {
       authorization: `Bearer ${clave}`,
       "content-type": "application/json",
     },
+    signal: AbortSignal.timeout(2000),
   });
 }
 
+async function pedirLectura(ruta: string): Promise<Response | null> {
+  // Solo lectura: 1 reintento ante timeout/caída (la escritura no reintenta).
+  for (let intento = 0; intento < 2; intento++) {
+    try {
+      const res = await pedir(ruta);
+      return res;
+    } catch {
+      if (intento === 1) return null;
+    }
+  }
+  return null;
+}
+
 export async function kvLeer(code: string): Promise<Room | null> {
-  const res = await pedir(`/get/${PREFIJO}${encodeURIComponent(code)}`);
+  const res = await pedirLectura(`/get/${PREFIJO}${encodeURIComponent(code)}`);
   if (!res || !res.ok) return null;
   let texto: string;
   try {
