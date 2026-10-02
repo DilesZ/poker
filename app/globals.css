@@ -1930,3 +1930,112 @@ p.poker-muted + p.poker-muted,
     transition: none !important;
   }
 }
+
+/* ---------- Laboratorio CFR (append mínimo) ---------- */
+
+.lab-wrap {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 18px 16px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.lab-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 10px;
+}
+
+.lab-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lab-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.lab-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.lab-field legend {
+  padding: 0;
+  margin-bottom: 6px;
+}
+
+fieldset.lab-field {
+  border: none;
+  margin: 0;
+  padding: 0;
+}
+
+.lab-field input,
+.lab-field select,
+.lab-field textarea {
+  padding: 10px 11px;
+  border-radius: 9px;
+  border: 1px solid var(--panel-hi);
+  background: #080d0f;
+  color: var(--text);
+  font-size: 14px;
+  font-family: var(--font);
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+}
+
+.lab-field textarea {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  min-height: 74px;
+  resize: vertical;
+}
+
+.lab-error {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #43181b, #2c0f11);
+  border: 1px solid var(--red);
+  color: #ffd9d9;
+  font-size: 13px;
+}
+
+.lab-ok {
+  margin: 0;
+  color: #7ee2a8;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.lab-table-wrap {
+  overflow-x: auto;
+}
+
+.lab-curve {
+  width: 100%;
+  height: auto;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+}
+
+@media (max-width: 920px) {
+  .lab-grid {
+    grid-template-columns: 1fr;
+  }
+}

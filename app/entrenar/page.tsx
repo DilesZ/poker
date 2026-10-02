@@ -2,6 +2,7 @@ import Link from "next/link";
 import GlobalBrainPanel from "@/components/agent/GlobalBrainPanel";
 import SelfPlayPanel from "@/components/training/SelfPlayPanel";
 import TournamentBar from "@/components/tournament/TournamentBar";
+import LabSection from "@/components/lab/LabSection";
 
 export const metadata = {
   title: "Entrenar — Poker Coach",
@@ -72,6 +73,7 @@ export default function EntrenarPage() {
           </section>
         </aside>
       </div>
+      <LabSection />
     </>
   );
 }
