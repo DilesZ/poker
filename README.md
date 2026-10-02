@@ -57,6 +57,10 @@ None — sin variables de entorno. Stats en localStorage, IA sin API externa.
   mano. Muestra progreso, winrate bb/100, showdown% y versión. **Honesto:
   NO es GTO** (sin rangos balanceados, sin adaptación al rival). Botón
   "Aplicar a IA mesa" guarda en localStorage (`poker-strategy`).
+  > `@legacy` desde el roadmap AI (ver `docs/AI_ROADMAP.md`): `lib/training/`
+  > es un ajuste tabular win/loss, NO regret minimization (sin `regretSum` /
+  > `strategySum`). Se mantiene porque `/entrenar` lo usa; el camino CFR
+  > empieza en `lib/engine/` (P1) y `docs/AI_ROADMAP.md` (P2+).
 - **Torneo** (`TournamentBar`, en `/entrenar`): SNG 6-max demo con niveles
   de ciegas/ante cada 8 manos, tabla ordenada por fichas en BB y badges
   Burbuja (3 vivos) / ITM (≤2) / Eliminado. Botón Nuevo SNG. Sorteo
