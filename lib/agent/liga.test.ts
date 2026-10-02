@@ -23,9 +23,9 @@ describe("agent/liga", () => {
     const r = jugarLiga(createBrain(), { hands: 30, seed: 7, dreamCada: 0 });
     expect(r.stats.reflects).toBe(180);
     expect(r.brain.handsPlayed).toBe(30);
-    // Epsilon decayó 30 veces (0.9*0.98^30≈0.49), no 180 (0.9*0.98^180≈0.02):
-    // con 6 reflects por mano sigue explorando.
-    expect(r.brain.epsilon).toBeCloseTo(0.9 * Math.pow(0.98, 30), 3);
+    // Epsilon decayó 30 veces a tasa liga 0.995 (0.9*0.995^30≈0.775), no 180
+    // veces (0.9*0.98^180≈0.02): con 6 reflects por mano sigue explorando.
+    expect(r.brain.epsilon).toBeCloseTo(0.9 * Math.pow(0.995, 30), 3);
   });
 
   it("4. no muta el brain de entrada y mueve priors", () => {
