@@ -7,7 +7,7 @@
 // defecto; configurable con `button`). Utilidades en fichas netas desde P0,
 // zero-sum. Estados inmutables: apply() no muta.
 import { CHANCE, type CFRGame, type CFRPlayer, type CFRState } from "../cfr/game";
-import { BUCKETS } from "./buckets";
+import { BUCKETS } from "./buckets-data";
 
 export interface HoldemHuConfig {
   sb: number;

@@ -23,7 +23,7 @@ import type { BaselineAgent, BaselineId } from "@/lib/baselines/agent";
 import { BASELINES } from "@/lib/baselines/agent";
 import type { EngineAction } from "@/lib/engine/types";
 import type { InformationSet } from "@/lib/engine/infoset";
-import { bucketOf } from "@/lib/games/buckets";
+import { bucketOf } from "@/lib/games/buckets-data";
 import { abstractHistory } from "@/lib/games/holdem-hu";
 import { loadCheckpoint, type CfrCheckpoint } from "./checkpoint";
 

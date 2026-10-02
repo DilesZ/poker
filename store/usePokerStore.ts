@@ -36,6 +36,10 @@ export type HeroActionKind = "fold" | "check" | "call" | "raise" | "allin";
 import type { HandAction, HandRecord, PosLabel } from "../lib/coach/types";
 export type { HandAction, HandRecord, PosLabel } from "../lib/coach/types";
 
+/** HandRecord persistido con cartas opcionales para el replay (exceso compatible:
+ *  el tipo base de lib/coach/types.ts no se toca; este alias local lo extiende).
+ *  Historiales viejos pueden no traer heroHole/board → el panel los trata como opcionales. */
+export type StoredHand = HandRecord & { heroHole?: Card[]; board?: Card[] };
 /** Clave de persistencia solo del historial. No migrar otras keys. */
 const CLAVE_HISTORIAL = "poker-hands-v1";
 const MAX_HISTORIAL = 200;
@@ -101,7 +105,7 @@ function registrarAccionHero(g: GameState, action: HeroActionKind, amount: numbe
 }
 
 /** Construye el HandRecord de la mano recién cerrada (no lo guarda). */
-function construirHandRecord(g: GameState, huboShowdown: boolean): HandRecord {
+function construirHandRecord(g: GameState, huboShowdown: boolean): StoredHand {
   const ahora = Date.now();
   const id = `h-${ahora}-${contadorHistorial % 100000}`;
   contadorHistorial += 1;
@@ -119,6 +123,8 @@ function construirHandRecord(g: GameState, huboShowdown: boolean): HandRecord {
     ),
     actions: [...accionesHero],
     result: { bbWon: (final - inicial) / bb, showdown: huboShowdown },
+    heroHole: [...(g.players[0]?.hole ?? [])],
+    board: [...g.board],
   };
 }
 
@@ -132,7 +138,7 @@ interface PokerStore {
   raiseAmount: number;
   lastResult: ResultadoMano | null;
   /** Historial persistido de manos del héroe (cap 200, solo esta key). */
-  histories: HandRecord[];
+  histories: StoredHand[];
   /** Interna: construye y guarda el HandRecord de la mano en curso. Se llama al cerrar. */
   recordHand: (huboShowdown: boolean) => void;
   /** Limpia el historial del usuario. */
