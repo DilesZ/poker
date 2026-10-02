@@ -1,7 +1,33 @@
 import { createBrain } from "@/lib/agent/brain";
 import { loadGlobalBrainServer, mergeAndSaveServer } from "@/lib/agent/globalStore";
+import { loadLatestTrainJob, recordTrainJob } from "@/lib/agent/jobs";
 
 export const dynamic = "force-dynamic";
+
+/** Límite por petición: evita timeouts de serverless (1000 manos ≈ 3-7s). */
+export const MAX_HANDS_POR_PETICION = 1500;
+
+/** GET → último entrenamiento terminado (para saber cuándo acabó). */
+export async function GET(): Promise<Response> {
+  try {
+    const ultimo = await loadLatestTrainJob();
+    if (!ultimo) {
+      return Response.json(
+        { entrenamientos: 0, ultimo: null },
+        { headers: { "cache-control": "no-store" } },
+      );
+    }
+    return Response.json(
+      { entrenamientos: 1, ultimo },
+      { headers: { "cache-control": "no-store" } },
+    );
+  } catch {
+    return Response.json(
+      { entrenamientos: 0, ultimo: null },
+      { headers: { "cache-control": "no-store" } },
+    );
+  }
+}
 
 export async function POST(request: Request): Promise<Response> {
   try {
@@ -18,7 +44,17 @@ export async function POST(request: Request): Promise<Response> {
     const pedido = cuerpo?.["hands"];
     let hands = typeof pedido === "number" && Number.isFinite(pedido) ? Math.floor(pedido) : 1000;
     if (hands < 1) hands = 1000;
-    if (hands > 20000) hands = 20000;
+    // Cap por petición (el panel reanuda en trozos hasta el objetivo).
+    let recorte = false;
+    if (hands > MAX_HANDS_POR_PETICION) {
+      hands = MAX_HANDS_POR_PETICION;
+      recorte = true;
+    }
+    const pedidoTotal = cuerpo?.["total"];
+    const total =
+      typeof pedidoTotal === "number" && Number.isFinite(pedidoTotal)
+        ? Math.floor(pedidoTotal)
+        : hands;
     const seedRaw = cuerpo?.["seed"];
     const seed = typeof seedRaw === "number" && Number.isFinite(seedRaw) ? Math.floor(seedRaw) : undefined;
 
@@ -77,6 +113,14 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     let handsPlayed = handsHechas;
+    let priorsMovidos: number | undefined;
+    if (entrenado && typeof entrenado === "object" && !Array.isArray(entrenado)) {
+      const stats = (entrenado as Record<string, unknown>)["stats"];
+      if (stats && typeof stats === "object" && !Array.isArray(stats)) {
+        const pm = (stats as Record<string, unknown>)["priorsMovidos"];
+        if (typeof pm === "number") priorsMovidos = pm;
+      }
+    }
     if (brainNuevo && typeof brainNuevo === "object") {
       try {
         const merged = await mergeAndSaveServer(
@@ -92,8 +136,28 @@ export async function POST(request: Request): Promise<Response> {
       if (actual) handsPlayed = actual.handsPlayed;
     }
 
+    const jobId = `T-${Date.now().toString(36)}-${Math.floor(Math.random() * 1296).toString(36)}`;
+    const ahora = Date.now();
+    try {
+      const { recordTrainJob } = await import("@/lib/agent/jobs");
+      await recordTrainJob({
+        id: jobId,
+        status: "done",
+        requested: total,
+        done: handsHechas,
+        winrateBB100,
+        showdownPct,
+        handsPlayed,
+        ...(priorsMovidos !== undefined ? { priorsMovidos } : {}),
+        startedAt: ahora,
+        updatedAt: ahora,
+      });
+    } catch {
+      // best-effort
+    }
+
     return Response.json(
-      { hands: handsHechas, winrateBB100, showdownPct, handsPlayed },
+      { jobId, hands: handsHechas, winrateBB100, showdownPct, handsPlayed, recorte },
       { headers: { "cache-control": "no-store" } },
     );
   } catch (e) {
