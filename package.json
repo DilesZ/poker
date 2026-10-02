@@ -12,6 +12,7 @@
     "liga": "tsx scripts/liga-local.ts",
     "evaluate": "tsx scripts/evaluate.ts",
     "train": "tsx scripts/train.ts",
+    "experiment": "tsx scripts/experiment.ts",
     "compute-ev": "tsx scripts/compute-preflop-ev.ts"
   },
   "dependencies": {

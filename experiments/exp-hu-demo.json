@@ -1,0 +1,68 @@
+{
+  "id": "exp-hu-demo",
+  "name": "exp-hu-demo",
+  "createdAt": "2026-10-02T22:16:04.208Z",
+  "algorithm": "cfr+",
+  "game": "holdem-hu-preflop",
+  "iterations": 300,
+  "seed": 11,
+  "checkpoint": {
+    "path": "checkpoints/exp-hu-demo.json",
+    "version": "exp-hu-demo",
+    "exploitability": 0.38307340348754915
+  },
+  "curve": [
+    {
+      "iteration": 19,
+      "exploitability": 1.3585810114987225
+    },
+    {
+      "iteration": 38,
+      "exploitability": 1.0089390027139764
+    },
+    {
+      "iteration": 75,
+      "exploitability": 0.8364410141826054
+    },
+    {
+      "iteration": 150,
+      "exploitability": 0.645058942406981
+    },
+    {
+      "iteration": 300,
+      "exploitability": 0.38307340348754915
+    }
+  ],
+  "evaluations": [
+    {
+      "opponent": "tag",
+      "hands": 500,
+      "seed": 11,
+      "bb100": -280.7,
+      "ci95": [
+        -490.69553079706543,
+        -70.70446920293452
+      ],
+      "extra": {
+        "misses": 0,
+        "fallbacksPostflop": 1588
+      }
+    },
+    {
+      "opponent": "calling-station",
+      "hands": 500,
+      "seed": 12,
+      "bb100": 70.56000000000003,
+      "ci95": [
+        29.42137622817024,
+        111.69862377182983
+      ],
+      "extra": {
+        "misses": 0,
+        "fallbacksPostflop": 1702
+      }
+    }
+  ],
+  "abstraction": "buckets-12",
+  "notes": "demo F22 con transferencia"
+}

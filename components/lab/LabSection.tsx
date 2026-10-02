@@ -9,6 +9,7 @@ import CurvesPanel from "@/components/lab/CurvesPanel";
 import CheckpointsList from "@/components/lab/CheckpointsList";
 import BenchmarkRunner from "@/components/lab/BenchmarkRunner";
 import ComparePanel from "@/components/lab/ComparePanel";
+import ExperimentsPanel from "@/components/lab/ExperimentsPanel";
 
 export default function LabSection() {
   const [trainResult, setTrainResult] = useState<TrainResult | null>(null);
@@ -38,6 +39,7 @@ export default function LabSection() {
       <CheckpointsList />
       <BenchmarkRunner />
       <ComparePanel />
+      <ExperimentsPanel />
     </div>
   );
 }
