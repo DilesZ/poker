@@ -10,6 +10,6 @@ export default defineConfig({
     alias: [{ find: "@", replacement: RAIZ }],
   },
   test: {
-    include: ["lib/**/*.test.ts"],
+    include: ["lib/**/*.test.ts", "scripts/**/*.test.ts"],
   },
 });
