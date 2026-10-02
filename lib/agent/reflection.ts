@@ -110,12 +110,6 @@ export function bucketStack(stack: number): StackBucket {
   return "deep";
 }
 
-/** Sufijo de rivales: "" (compat, sin dato), "/HU" (≤1 rival) o "/multi". */
-function sufijoRivales(numRivales?: number): string {
-  if (typeof numRivales !== "number") return "";
-  return numRivales <= 1 ? "/HU" : "/multi";
-}
-
 /** Stack global del record: mid si no hay dato, si no bucket de delta+pot. */
 export function stackDeRecord(record: HandRecord): StackBucket {
   if (record.potWon === 0 && record.stackDelta === 0) return "mid";
