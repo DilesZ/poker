@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect } from "react";
 import { ActionBar } from "../components/poker/ActionBar";
+import { CoachPanel } from "../components/coach/CoachPanel";
 import { CoachFeedback } from "../components/poker/CoachFeedback";
 import { ErrorTagger } from "../components/poker/ErrorTagger";
 import { HandLog } from "../components/poker/HandLog";
@@ -50,6 +51,7 @@ export default function HomePage() {
           <ErrorTagger />
           <HandLog />
           <StrategyPanel />
+          <CoachPanel />
         </aside>
       </div>
     </>

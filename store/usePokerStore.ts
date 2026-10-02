@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
 import { getAiAction } from "../lib/poker/ai";
 import { calcEquity } from "../lib/poker/equity";
 import { CATEGORY_NAMES, evaluate7 } from "../lib/poker/evaluator";
@@ -28,6 +29,99 @@ const SMALL_BLIND = 10;
 const BIG_BLIND = 20;
 const MAX_LOG = 200;
 
+export type HeroActionKind = "fold" | "check" | "call" | "raise" | "allin";
+// Tipos canónicos del coach (lib/coach/types.ts), reexportados para no
+// duplicar contratos. HeroActionKind ⊆ CoachActionType (el héroe no usa
+// "bet": apuesta vía "raise").
+import type { HandAction, HandRecord, PosLabel } from "../lib/coach/types";
+export type { HandAction, HandRecord, PosLabel } from "../lib/coach/types";
+
+/** Clave de persistencia solo del historial. No migrar otras keys. */
+const CLAVE_HISTORIAL = "poker-hands-v1";
+const MAX_HISTORIAL = 200;
+
+/** Buffer de acciones del héroe en la mano en curso (no persistido). */
+let accionesHero: HandAction[] = [];
+/** Stack del héroe al empezar la mano, antes de ciegas (no persistido). */
+let stackInicialMano: number | null = null;
+/** Contador en memoria para el sufijo del id (sin Math.random). */
+let contadorHistorial = 0;
+
+/** Almacenamiento para zustand persist: localStorage en navegador, memoria en Node/tests. */
+const memoriaFallback = new Map<string, string>();
+function almacenamientoHistorial(): {
+  getItem: (k: string) => string | null;
+  setItem: (k: string, v: string) => void;
+  removeItem: (k: string) => void;
+} {
+  if (typeof window !== "undefined" && window.localStorage) return window.localStorage;
+  const g = globalThis as unknown as {
+    localStorage?: {
+      getItem: (k: string) => string | null;
+      setItem: (k: string, v: string) => void;
+      removeItem: (k: string) => void;
+    };
+  };
+  if (g.localStorage) return g.localStorage;
+  return {
+    getItem: (k: string) => memoriaFallback.get(k) ?? null,
+    setItem: (k: string, v: string) => {
+      memoriaFallback.set(k, v);
+    },
+    removeItem: (k: string) => {
+      memoriaFallback.delete(k);
+    },
+  };
+}
+
+/** Etiquetas 6-max en orden circular desde el botón: BTN, SB, BB, UTG, MP, CO. */
+const ETIQUETAS_6MAX: PosLabel[] = ["BTN", "SB", "BB", "UTG", "MP", "CO"];
+
+/** Construye positions desde el botón; con menos asientos usa los existentes en ese orden. */
+function construirPositions(button: number, seatIds: number[]): Record<number, PosLabel> {
+  const pos = {} as Record<number, PosLabel>;
+  if (seatIds.length === 0) return pos;
+  const orden = [...seatIds].sort((a, b) => {
+    const da = (((a - button) % NUM_PLAYERS) + NUM_PLAYERS) % NUM_PLAYERS;
+    const db = (((b - button) % NUM_PLAYERS) + NUM_PLAYERS) % NUM_PLAYERS;
+    return da - db;
+  });
+  orden.forEach((seat, idx) => {
+    const etiqueta = ETIQUETAS_6MAX[idx % ETIQUETAS_6MAX.length];
+    if (etiqueta) pos[seat] = etiqueta;
+  });
+  return pos;
+}
+
+/** Añade una acción del héroe al buffer con la calle actual y el bote tras su apuesta. */
+function registrarAccionHero(g: GameState, action: HeroActionKind, amount: number): void {
+  // Solo calles de apuesta (el héroe nunca actúa en showdown/done).
+  if (g.street !== "preflop" && g.street !== "flop" && g.street !== "turn" && g.street !== "river") return;
+  accionesHero.push({ street: g.street, seat: 0, action, amount, potAfter: g.pot });
+}
+
+/** Construye el HandRecord de la mano recién cerrada (no lo guarda). */
+function construirHandRecord(g: GameState, huboShowdown: boolean): HandRecord {
+  const ahora = Date.now();
+  const id = `h-${ahora}-${contadorHistorial % 100000}`;
+  contadorHistorial += 1;
+  const bb = g.bigBlind > 0 ? g.bigBlind : BIG_BLIND;
+  const final = g.players[0]?.stack ?? 0;
+  const inicial = stackInicialMano ?? final;
+  return {
+    id,
+    ts: ahora,
+    heroSeat: 0,
+    button: g.button,
+    positions: construirPositions(
+      g.button,
+      g.players.map((p) => p.id),
+    ),
+    actions: [...accionesHero],
+    result: { bbWon: (final - inicial) / bb, showdown: huboShowdown },
+  };
+}
+
 interface PokerStore {
   game: GameState | null;
   log: string[];
@@ -37,6 +131,12 @@ interface PokerStore {
   button: number;
   raiseAmount: number;
   lastResult: ResultadoMano | null;
+  /** Historial persistido de manos del héroe (cap 200, solo esta key). */
+  histories: HandRecord[];
+  /** Interna: construye y guarda el HandRecord de la mano en curso. Se llama al cerrar. */
+  recordHand: (huboShowdown: boolean) => void;
+  /** Limpia el historial del usuario. */
+  clearHistories: () => void;
   setRaiseAmount: (n: number) => void;
   hydrateStats: () => void;
   startHand: () => void;
@@ -209,7 +309,8 @@ function commitResult(
   return next;
 }
 
-export const usePokerStore = create<PokerStore>()((set, get) => ({
+export const usePokerStore = create<PokerStore>()(
+  persist<PokerStore, [], [], Pick<PokerStore, "histories">>((set, get) => ({
   game: null,
   log: [],
   stats: registroVacio,
@@ -217,6 +318,7 @@ export const usePokerStore = create<PokerStore>()((set, get) => ({
   button: 0,
   raiseAmount: 60,
   lastResult: null,
+  histories: [],
 
   setRaiseAmount: (n: number) => {
     const safe = Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
@@ -247,6 +349,9 @@ export const usePokerStore = create<PokerStore>()((set, get) => ({
         p.stack = s <= 0 ? STARTING_STACK : s;
       });
     }
+    // Guarda el stack inicial antes de ciegas (para bbWon neto) y abre el buffer.
+    stackInicialMano = g.players[0]?.stack ?? STARTING_STACK;
+    accionesHero = [];
     postBlinds(g);
     deal(g);
     const nextLog = [
@@ -272,6 +377,7 @@ export const usePokerStore = create<PokerStore>()((set, get) => ({
     if (!h) return;
     const heroBet = h.bet;
     h.folded = true;
+    registrarAccionHero(g, "fold", 0);
     const nextLog = [...log, "Hero foldea."];
     // La mano continúa entre villanos: algún fold, calles al instante y showdown.
     if (activeVillains(g) > 2) {
@@ -304,6 +410,8 @@ export const usePokerStore = create<PokerStore>()((set, get) => ({
       stats: endStats,
       lastResult: "D",
     });
+    // Cierre de mano tras fold del héroe (villanos resuelven showdown): sin showdown del héroe.
+    get().recordHand(false);
   },
 
   heroCallOrCheck: () => {
@@ -316,6 +424,8 @@ export const usePokerStore = create<PokerStore>()((set, get) => ({
     if (!h) return;
     const call = toCallFor(g, 0);
     const nextLog = [...log];
+    let pagado = 0;
+    let accionHero: HeroActionKind = "check";
     if (call <= 0) {
       nextLog.push("Hero pasa.");
     } else {
@@ -324,9 +434,13 @@ export const usePokerStore = create<PokerStore>()((set, get) => ({
       h.bet += pay;
       if (h.stack === 0) h.allIn = true;
       nextLog.push(`Hero iguala ${pay}.`);
+      pagado = pay;
+      accionHero = "call";
     }
     refreshPot(g);
     g.currentBet = Math.max(0, ...g.players.map((p) => p.bet));
+    if (h.allIn) accionHero = "allin";
+    registrarAccionHero(g, accionHero, pagado);
     playVillains(g, nextLog, stats);
     if (activeVillains(g) === 0) {
       heroTakesPot(g, nextLog);
@@ -337,6 +451,8 @@ export const usePokerStore = create<PokerStore>()((set, get) => ({
         stats: endStats,
         lastResult: "V",
       });
+      // Cierre uncontested: el héroe se lleva el bote sin showdown.
+      get().recordHand(false);
       return;
     }
     set({ game: g, log: nextLog.slice(-MAX_LOG) });
@@ -360,6 +476,7 @@ export const usePokerStore = create<PokerStore>()((set, get) => ({
     const nextLog = [...log, `Hero sube a ${h.bet} (+${pay}).`];
     refreshPot(g);
     g.currentBet = Math.max(0, ...g.players.map((p) => p.bet));
+    registrarAccionHero(g, h.allIn ? "allin" : "raise", pay);
     playVillains(g, nextLog, stats);
     if (activeVillains(g) === 0) {
       heroTakesPot(g, nextLog);
@@ -370,6 +487,8 @@ export const usePokerStore = create<PokerStore>()((set, get) => ({
         stats: endStats,
         lastResult: "V",
       });
+      // Cierre uncontested: el héroe se lleva el bote sin showdown.
+      get().recordHand(false);
       return;
     }
     set({ game: g, log: nextLog.slice(-MAX_LOG) });
@@ -412,6 +531,8 @@ export const usePokerStore = create<PokerStore>()((set, get) => ({
         stats: endStats,
         lastResult: resultado,
       });
+      // Cierre con showdown: el bote se resolvió con las 5 comunitarias.
+      get().recordHand(true);
       return;
     }
     advanceStreet(g);
@@ -441,4 +562,24 @@ export const usePokerStore = create<PokerStore>()((set, get) => ({
       log: [...get().log, "Estadísticas reiniciadas."].slice(-MAX_LOG),
     });
   },
-}));
+
+  recordHand: (huboShowdown: boolean) => {
+    const g = get().game;
+    if (!g) return;
+    const rec = construirHandRecord(g, huboShowdown);
+    const next = [...get().histories, rec].slice(-MAX_HISTORIAL);
+    accionesHero = [];
+    set({ histories: next });
+  },
+
+  clearHistories: () => {
+    set({ histories: [] });
+  },
+  }),
+    {
+      name: CLAVE_HISTORIAL,
+      partialize: (s) => ({ histories: s.histories }),
+      storage: createJSONStorage(() => almacenamientoHistorial()),
+    },
+  ),
+);
