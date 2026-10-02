@@ -10,6 +10,7 @@ interface Resumen {
   updatedAt: number | null;
   avgDeltaBB100: number;
   manosConDelta: number;
+  situacionesVisitadas: number;
 }
 
 interface TrainResp {
@@ -47,6 +48,7 @@ const VACIO: Resumen = {
   updatedAt: null,
   avgDeltaBB100: 0,
   manosConDelta: 0,
+  situacionesVisitadas: 0,
 };
 
 const TROZO = 1000;
@@ -84,6 +86,8 @@ export default function GlobalBrainPanel() {
         updatedAt: typeof data.updatedAt === "number" ? data.updatedAt : null,
         avgDeltaBB100: typeof data.avgDeltaBB100 === "number" ? data.avgDeltaBB100 : 0,
         manosConDelta: typeof data.manosConDelta === "number" ? data.manosConDelta : 0,
+        situacionesVisitadas:
+          typeof data.situacionesVisitadas === "number" ? data.situacionesVisitadas : 0,
       });
       setError(null);
     } catch (e) {
@@ -294,6 +298,10 @@ export default function GlobalBrainPanel() {
           <div>
             <dt>Priors aprendidos</dt>
             <dd>{resumen.priorsAprendidos}</dd>
+          </div>
+          <div>
+            <dt>Situaciones / 312</dt>
+            <dd>{resumen.situacionesVisitadas}</dd>
           </div>
         </dl>
       )}

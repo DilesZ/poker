@@ -20,7 +20,7 @@ describe("agent/liga", () => {
   });
 
   it("3. 6 reflects por mano y 1 mano contada (sin inflar)", () => {
-    const r = jugarLiga(createBrain(), { hands: 30, seed: 7, dreamCada: 0 });
+    const r = jugarLiga(createBrain(), { hands: 30, seed: 7, dreamCada: 0, replay: false });
     expect(r.stats.reflects).toBe(180);
     expect(r.brain.handsPlayed).toBe(30);
     // Epsilon decayó 30 veces a tasa liga 0.995 (0.9*0.995^30≈0.775), no 180
@@ -46,4 +46,13 @@ describe("agent/liga", () => {
     expect(r.stats.hands).toBe(200);
     expect(Date.now() - t0).toBeLessThan(30000);
   }, 40000);
+
+  it("6. replay suma 8 reflects por bloque de 25 (y se puede apagar)", () => {
+    const con = jugarLiga(createBrain(), { hands: 100, seed: 7, dreamCada: 0 });
+    // 100 manos × 6 + 4 bloques × 8 replay = 632.
+    expect(con.stats.reflects).toBe(632);
+    const sin = jugarLiga(createBrain(), { hands: 100, seed: 7, dreamCada: 0, replay: false });
+    expect(sin.stats.reflects).toBe(600);
+    expect(sin.brain.handsPlayed).toBe(100);
+  });
 });

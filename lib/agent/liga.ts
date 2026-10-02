@@ -23,6 +23,9 @@ export interface LigaOpts {
   seed?: number;
   /** Cada cuántas manos sueña (default 25, n=5). 0 = sin sueño. */
   dreamCada?: number;
+  /** Replay priorizado por |ventaja| (default true). Re-juega las manos que
+   * más enseñan en vez de solo la última: +8 reflects/25 manos (~+5% CPU). */
+  replay?: boolean;
 }
 
 export interface LigaStats {
@@ -162,6 +165,10 @@ export function jugarLiga(base: Brain, opts: LigaOpts = {}): LigaResult {
   let sumaBB = 0;
   let showdownCount = 0;
   let reflects = 0;
+  // Buffer de replay: últimas 300 reflexiones con su |ventaja| para
+  // re-entrenar las que más enseñan (consejo unánime del council).
+  const quiReplay = opts.replay ?? true;
+  const buf: { rec: Parameters<typeof reflectOnHand>[1]; ventaja: number }[] = [];
   try {
     for (let h = 0; h < nHands; h++) {
       const button = h % NUM;
@@ -304,8 +311,28 @@ export function jugarLiga(base: Brain, opts: LigaOpts = {}): LigaResult {
         });
         actual = r.brain;
         reflects++;
+        if (quiReplay) {
+          buf.push({ rec, ventaja: r.ventaja });
+          if (buf.length > 300) buf.shift();
+        }
       }
 
+      // Replay priorizado cada 25 manos, independiente del sueño: top-8 por
+      // |ventaja|, sin decaer ni contar (la mano ya contó). Determinista:
+      // inserción ordenada + sort estable.
+      if (quiReplay && (h + 1) % 25 === 0 && buf.length > 0) {
+        const top = [...buf]
+          .sort((a, b) => Math.abs(b.ventaja) - Math.abs(a.ventaja))
+          .slice(0, 8);
+        for (const item of top) {
+          const rr = reflectOnHand(actual, item.rec, {
+            decayEpsilon: false,
+            cuentaMano: false,
+          });
+          actual = rr.brain;
+          reflects++;
+        }
+      }
       if (dreamCada > 0 && (h + 1) % dreamCada === 0) {
         try {
           const tr0 = trazas[0];

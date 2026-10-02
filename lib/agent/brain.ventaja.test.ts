@@ -71,4 +71,21 @@ describe("ventaja vs baseline", () => {
     const subeFold = (r2.brain.priors["preflop/hasPot/fold"] ?? 0.5) - 0.5;
     expect(subeWin).toBeGreaterThan(subeFold * 3);
   });
+
+  it("6. reflect devuelve la ventaja (para el replay priorizado)", () => {
+    const b = createBrain();
+    const win = buildHandRecord({
+      won: true,
+      myCards: "A♠ K♠",
+      board: "K♦ 7♣ 2♠ 5♥ 9♦",
+      showdown: true,
+      actions: [{ street: "river", type: "call", amount: 100, toCall: 100 }],
+      potWon: 400,
+      stackDelta: 250,
+    });
+    // (250-(-5))/100 = 2.55 sin clamp.
+    expect(reflectOnHand(b, win).ventaja).toBeCloseTo(2.55, 6);
+    // Fold barato: floor good-fold +0.15.
+    expect(reflectOnHand(b, recordFold(-10, false)).ventaja).toBeCloseTo(0.15, 6);
+  });
 });

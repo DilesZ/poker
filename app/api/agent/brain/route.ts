@@ -14,11 +14,15 @@ function resumen(brain: Brain | null) {
       updatedAt: null as number | null,
       avgDeltaBB100: 0,
       manosConDelta: 0,
+      situacionesVisitadas: 0,
     };
   }
   const lessons = brain.lessons ?? [];
   const victorias = lessons.filter((l) => l.outcome === "victoria").length;
   const winrate = lessons.length > 0 ? victorias / lessons.length : 0;
+  // Cobertura: situaciones distintas visitadas (de 312). La cola turn/river
+  // apenas se visita: si no sube, el entrenamiento no llega ahí.
+  const situacionesVisitadas = Object.keys(brain.counts ?? {}).length;
   // EV real: media de stackDelta de las lecciones con datos, en bb/100 (bb=20).
   // El winrate de lecciones engaña (la mayoría de manos pierde las ciegas por
   // diseño); el EV dice si el juego gana fichas.
@@ -44,6 +48,7 @@ function resumen(brain: Brain | null) {
     updatedAt,
     avgDeltaBB100: Math.round(avgDeltaBB100 * 100) / 100,
     manosConDelta: deltas.length,
+    situacionesVisitadas,
   };
 }
 
@@ -66,7 +71,7 @@ export async function GET(request: Request): Promise<Response> {
     );
   } catch (e) {
     return Response.json(
-      { handsPlayed: 0, epsilon: 0.9, lessonsCount: 0, winrate: 0, priorsAprendidos: 0, updatedAt: null, avgDeltaBB100: 0, manosConDelta: 0, error: e instanceof Error ? e.message : "error" },
+      { handsPlayed: 0, epsilon: 0.9, lessonsCount: 0, winrate: 0, priorsAprendidos: 0, updatedAt: null, avgDeltaBB100: 0, manosConDelta: 0, situacionesVisitadas: 0, error: e instanceof Error ? e.message : "error" },
       { headers: { "cache-control": "no-store" } },
     );
   }
@@ -110,7 +115,7 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json(resumen(brain), { headers: { "cache-control": "no-store" } });
   } catch (e) {
     return Response.json(
-      { handsPlayed: 0, epsilon: 0.9, lessonsCount: 0, winrate: 0, priorsAprendidos: 0, updatedAt: null, avgDeltaBB100: 0, manosConDelta: 0, error: e instanceof Error ? e.message : "error" },
+      { handsPlayed: 0, epsilon: 0.9, lessonsCount: 0, winrate: 0, priorsAprendidos: 0, updatedAt: null, avgDeltaBB100: 0, manosConDelta: 0, situacionesVisitadas: 0, error: e instanceof Error ? e.message : "error" },
       { headers: { "cache-control": "no-store" } },
     );
   }

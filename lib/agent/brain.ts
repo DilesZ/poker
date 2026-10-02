@@ -269,7 +269,7 @@ export function reflectOnHand(
   brain: Brain,
   record: HandRecord,
   opts: ReflectOpts = {},
-): { brain: Brain; lesson?: Lesson } {
+): { brain: Brain; lesson?: Lesson; ventaja: number } {
   const decayEpsilon = opts.decayEpsilon ?? true;
   const cuentaMano = opts.cuentaMano ?? true;
   const tasaDecay =
@@ -395,6 +395,7 @@ export function reflectOnHand(
   return {
     brain: { handsPlayed, lessons, priors, beliefs, epsilon, counts, baselines },
     lesson,
+    ventaja,
   };
 }
 
