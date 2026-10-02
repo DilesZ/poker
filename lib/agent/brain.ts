@@ -233,6 +233,13 @@ export function chooseBrainAction(brain: Brain, legal: BrainLegal, ctx: BrainCon
   return conTamano(mejor, legal);
 }
 
+/** Opciones de reflexión: la liga on-policy refleja 6 asientos por mano y
+ * solo debe decaer epsilon y contar la mano una vez (último asiento). */
+export interface ReflectOpts {
+  decayEpsilon?: boolean;
+  cuentaMano?: boolean;
+}
+
 /** Aprende de la mano: ventaja vs baseline + crédito total a actionHistory.
  *
  * Por qué ventaja y no won/lost: en 6-max la mayoría de manos pierde las
@@ -244,7 +251,10 @@ export function chooseBrainAction(brain: Brain, legal: BrainLegal, ctx: BrainCon
 export function reflectOnHand(
   brain: Brain,
   record: HandRecord,
+  opts: ReflectOpts = {},
 ): { brain: Brain; lesson?: Lesson } {
+  const decayEpsilon = opts.decayEpsilon ?? true;
+  const cuentaMano = opts.cuentaMano ?? true;
   const epsilonAntes = brain.epsilon;
   const claveUltima = claveSituacion(record);
   const historial = record.actionHistory.filter(
@@ -317,8 +327,10 @@ export function reflectOnHand(
     }
   }
 
-  let epsilon = Math.max(EPSILON_MIN, redondear(epsilonAntes * EPSILON_DECAY, 6));
-  const handsPlayed = brain.handsPlayed + 1;
+  let epsilon = decayEpsilon
+    ? Math.max(EPSILON_MIN, redondear(epsilonAntes * EPSILON_DECAY, 6))
+    : epsilonAntes;
+  const handsPlayed = brain.handsPlayed + (cuentaMano ? 1 : 0);
   const lessonsAcum = [...brain.lessons];
 
   const primeraMano = brain.handsPlayed === 0;

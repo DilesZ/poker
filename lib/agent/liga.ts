@@ -1,0 +1,345 @@
+// Liga autónoma on-policy: el cerebro juega LOS 6 ASIENTOS contra sí mismo.
+// Sin humanos, sin heurística fija: cada asiento decide vía chooseBrainAction
+// con sus cartas reales y al cerrar se reflejan los 6 (ventaja por delta
+// propio). Solo cuenta 1 mano y decae epsilon 1 vez por mano repartida.
+// Pura, síncrona, determinista por seed. Para jugar sin el usuario:
+// - Servidor: POST/GET /api/agent/liga (+ cron en vercel.json).
+// - Local: npm run liga (entrena y sube el cerebro a prod).
+import { advanceStreet, deal, newHand, postBlinds, refreshPot, showdown } from "../poker/game";
+import type { Card } from "../poker/types";
+import { estimateStrength, mulberry32, positionOfSeat } from "../training/selfplay";
+import { buildHandRecord, type AccionMano } from "./reflection";
+import {
+  chooseBrainAction,
+  reflectOnHand,
+  type Brain,
+  type BrainContext,
+  type BrainLegal,
+} from "./brain";
+import { dreamConsolidate } from "./dream";
+
+export interface LigaOpts {
+  hands?: number;
+  seed?: number;
+  /** Cada cuántas manos sueña (default 25, n=5). 0 = sin sueño. */
+  dreamCada?: number;
+}
+
+export interface LigaStats {
+  hands: number;
+  /** Suma de bb de los 6 (cero-sum: debe ≈0; si no, hay bug de fichas). */
+  sumaBB: number;
+  showdownPct: number;
+  reflects: number;
+  priorsMovidos: number;
+}
+
+export interface LigaResult {
+  brain: Brain;
+  stats: LigaStats;
+}
+
+const RANGOS: Record<number, string> = { 11: "J", 12: "Q", 13: "K", 14: "A" };
+
+function cartaCorta(c: Card): string {
+  return `${RANGOS[c.rank] ?? c.rank}${c.suit}`;
+}
+
+type TipoMano = "fold" | "check" | "call" | "raise" | "allin";
+
+interface Traza {
+  historial: AccionMano[];
+  calleFinal: string;
+}
+
+/** Aplica la decisión del cerebro al estado (devuelve tipo registrado). */
+function aplicarDecision(
+  e: {
+    players: { id: number; bet: number; stack: number; folded: boolean; allIn: boolean }[];
+    currentBet: number;
+    pot: number;
+  },
+  refresh: () => void,
+  pid: number,
+  tipo: TipoMano,
+  size: number | undefined,
+  toCall: number,
+  invested: number[],
+): { tipo: TipoMano; cantidad: number } {
+  const p = e.players.find((x) => x.id === pid);
+  if (!p) return { tipo: "check", cantidad: 0 };
+  if (tipo === "fold") {
+    p.folded = true;
+    return { tipo: "fold", cantidad: 0 };
+  }
+  if (tipo === "check") {
+    if (toCall > 0) {
+      p.folded = true;
+      return { tipo: "fold", cantidad: 0 };
+    }
+    return { tipo: "check", cantidad: 0 };
+  }
+  if (tipo === "call") {
+    const pay = Math.min(p.stack, Math.max(0, toCall));
+    p.stack -= pay;
+    p.bet += pay;
+    invested[pid] = (invested[pid] ?? 0) + pay;
+    if (p.stack === 0) p.allIn = true;
+    refresh();
+    return { tipo: p.allIn && pay >= toCall && toCall > 0 ? "allin" : "call", cantidad: pay };
+  }
+  if (tipo === "raise") {
+    const deseada = typeof size === "number" ? size : Math.max(e.currentBet + 1, Math.round(e.pot * 0.5));
+    const objetivo = Math.min(Math.max(Math.floor(deseada), e.currentBet + 1), p.bet + p.stack);
+    const cantidad = Math.max(0, objetivo - p.bet);
+    p.stack -= cantidad;
+    p.bet += cantidad;
+    invested[pid] = (invested[pid] ?? 0) + cantidad;
+    if (p.stack === 0) p.allIn = true;
+    // Sin esto currentBet se quedaba en la BB toda la mano: los precios eran
+    // ficticios (todos pagaban la BB) y los datos de entrenamiento, irreales.
+    const subio = p.bet > e.currentBet;
+    if (subio) e.currentBet = p.bet;
+    refresh();
+    if (!subio) return { tipo: "call", cantidad };
+    return { tipo: p.stack === 0 ? "allin" : "raise", cantidad };
+  }
+  const pay = p.stack;
+  p.stack = 0;
+  p.allIn = true;
+  p.bet += pay;
+  invested[pid] = (invested[pid] ?? 0) + pay;
+  if (p.bet > e.currentBet) e.currentBet = p.bet;
+  refresh();
+  return { tipo: "allin", cantidad: pay };
+}
+
+function clonarBrain(b: Brain): Brain {
+  return {
+    handsPlayed: b.handsPlayed,
+    lessons: [...b.lessons],
+    priors: { ...b.priors },
+    beliefs: [...b.beliefs],
+    epsilon: b.epsilon,
+    counts: { ...(b.counts ?? {}) },
+    baselines: { ...(b.baselines ?? {}) },
+  };
+}
+
+function contarMovidos(priors: Record<string, number>): number {
+  let n = 0;
+  for (const v of Object.values(priors)) if (v !== 0.5) n++;
+  return n;
+}
+
+/**
+ * Juega `hands` manos con el cerebro en los 6 asientos y lo devuelve entrenado.
+ * No muta el brain de entrada. 1000 manos ≈ 5-10s.
+ */
+export function jugarLiga(base: Brain, opts: LigaOpts = {}): LigaResult {
+  const nHands = opts.hands ?? 500;
+  const seed = opts.seed ?? 777;
+  const dreamCada = opts.dreamCada ?? 25;
+  const NUM = 6;
+  const STACK = 1000;
+  const SB = 10;
+  const BB = 20;
+  const STREETS = ["preflop", "flop", "turn", "river"] as const;
+
+  if (!Number.isInteger(nHands) || nHands <= 0) {
+    const clon = clonarBrain(base);
+    return {
+      brain: clon,
+      stats: { hands: 0, sumaBB: 0, showdownPct: 0, reflects: 0, priorsMovidos: contarMovidos(clon.priors) },
+    };
+  }
+  if (!Number.isFinite(seed)) throw new Error("seed debe ser finito");
+
+  let actual = clonarBrain(base);
+  const rng = mulberry32(seed >>> 0);
+  const originalRandom = Math.random;
+  Math.random = rng;
+  let sumaBB = 0;
+  let showdownCount = 0;
+  let reflects = 0;
+  try {
+    for (let h = 0; h < nHands; h++) {
+      const button = h % NUM;
+      const state = newHand(NUM, STACK, SB, BB, button);
+      // Baseline PRE-ciegas (1000 por asiento): los deltas incluyen el coste de
+      // las ciegas y la suma por mano es cero-sum. Si se capturase post-ciegas,
+      // cada mano sumaría +30 fichas (+1.5bb) de artefacto.
+      const stackInicio = state.players.map((p) => p.stack);
+      postBlinds(state);
+      deal(state);
+      refreshPot(state);
+      const trazas: Traza[] = state.players.map(() => ({ historial: [], calleFinal: "preflop" }));
+      let invested = new Array<number>(NUM).fill(0);
+      const sbIdx = (button + 1) % NUM;
+      const bbIdx = (button + 2) % NUM;
+      invested[sbIdx] = Math.min(SB, state.players[sbIdx]?.bet ?? 0);
+      invested[bbIdx] = Math.min(BB, state.players[bbIdx]?.bet ?? 0);
+
+      let handOver = false;
+      let reachedShowdown = false;
+      const e = state as unknown as Parameters<typeof aplicarDecision>[0];
+
+      for (let si = 0; si < STREETS.length && !handOver; si++) {
+        for (let pass = 0; pass < 3 && !handOver; pass++) {
+          const startOffset = si === 0 ? 3 : 1;
+          let raisedThisPass = false;
+          for (let k = 0; k < NUM; k++) {
+            const idx = (button + startOffset + k) % NUM;
+            const p = state.players[idx];
+            if (!p || p.folded || p.allIn) continue;
+            let activos = 0;
+            for (const q of state.players) if (!q.folded) activos++;
+            if (activos <= 1) {
+              handOver = true;
+              break;
+            }
+            const toCall = Math.max(0, state.currentBet - (invested[p.id] ?? 0));
+            const strength = estimateStrength(p.hole, state.board);
+            const inv = invested[p.id] ?? 0;
+            const candidates: BrainLegal["candidates"] = [];
+            if (toCall > 0) candidates.push({ type: "fold" });
+            else candidates.push({ type: "check" });
+            if (toCall > 0 && p.stack > toCall) candidates.push({ type: "call" });
+            if (inv + p.stack > state.currentBet) candidates.push({ type: "raise" });
+            if (p.stack > 0) candidates.push({ type: "allin" });
+            const legal = { candidates, toCall, pot: state.pot, stack: p.stack, bb: BB } as BrainLegal;
+            let rivales = 0;
+            for (const q of state.players) if (q.id !== p.id && !q.folded) rivales++;
+            const ctx = {
+              street: STREETS[si] ?? "preflop",
+              boardLen: state.board.length,
+              myStack: p.stack,
+              pot: state.pot,
+              toCall,
+              numRivales: rivales,
+              strength,
+            } as BrainContext;
+            const ba = chooseBrainAction(actual, legal, ctx);
+            const nivelAntes = state.currentBet;
+            const reg = aplicarDecision(
+              e,
+              () => refreshPot(state),
+              p.id,
+              ba.type,
+              ba.size,
+              toCall,
+              invested,
+            );
+            if (p.bet > nivelAntes) raisedThisPass = true;
+            const tr = trazas[p.id];
+            if (tr) {
+              tr.historial.push({
+                street: STREETS[si] ?? "preflop",
+                type: reg.tipo,
+                ...(reg.cantidad > 0 ? { amount: reg.cantidad } : {}),
+                ...(toCall > 0 ? { toCall } : {}),
+              });
+              tr.calleFinal = STREETS[si] ?? "preflop";
+            }
+          }
+          const rest = state.players.filter((q) => !q.folded);
+          if (rest.length <= 1) {
+            handOver = true;
+            break;
+          }
+          if (!raisedThisPass) break;
+        }
+        const rest = state.players.filter((q) => !q.folded);
+        if (rest.length <= 1) {
+          handOver = true;
+          break;
+        }
+        if (si < STREETS.length - 1) {
+          advanceStreet(state);
+          state.currentBet = 0;
+          invested = new Array<number>(NUM).fill(0);
+        }
+      }
+
+      const survivors = state.players.filter((q) => !q.folded);
+      if (!handOver && survivors.length > 1) {
+        showdown(state);
+        reachedShowdown = true;
+      } else if (survivors.length === 1) {
+        const w = survivors[0];
+        if (w) {
+          refreshPot(state);
+          w.stack += state.pot;
+        }
+      } else {
+        showdown(state);
+        reachedShowdown = true;
+      }
+      if (reachedShowdown) showdownCount++;
+
+      // Reflexión on-policy: cada asiento aprende de su propio delta.
+      const boardTxt = state.board.map(cartaCorta).join(" ");
+      for (let s = 0; s < NUM; s++) {
+        const pl = state.players[s];
+        const tr = trazas[s];
+        if (!pl || !tr) continue;
+        const delta = pl.stack - (stackInicio[s] ?? STACK);
+        sumaBB += delta / BB;
+        const ultimo = s === NUM - 1;
+        const rec = buildHandRecord({
+          won: delta > 0,
+          myCards: pl.hole.map(cartaCorta).join(" "),
+          board: boardTxt,
+          street: tr.calleFinal,
+          actions: tr.historial,
+          showdown: reachedShowdown,
+          potWon: Math.max(0, delta),
+          stackDelta: delta,
+          numRivales: NUM - 1,
+        });
+        const r = reflectOnHand(actual, rec, {
+          decayEpsilon: ultimo,
+          cuentaMano: ultimo,
+        });
+        actual = r.brain;
+        reflects++;
+      }
+
+      if (dreamCada > 0 && (h + 1) % dreamCada === 0) {
+        try {
+          const tr0 = trazas[0];
+          const pl0 = state.players[0];
+          if (tr0 && pl0) {
+            const rec = buildHandRecord({
+              won: (pl0.stack - (stackInicio[0] ?? STACK)) > 0,
+              myCards: pl0.hole.map(cartaCorta).join(" "),
+              board: boardTxt,
+              street: tr0.calleFinal,
+              actions: tr0.historial,
+              showdown: reachedShowdown,
+              potWon: 0,
+              stackDelta: pl0.stack - (stackInicio[0] ?? STACK),
+              numRivales: NUM - 1,
+            });
+            actual = dreamConsolidate(actual, rec, 5, (seed ^ (h + 1)) >>> 0);
+          }
+        } catch {
+          // el sueño nunca rompe la liga
+        }
+      }
+    }
+  } finally {
+    Math.random = originalRandom;
+  }
+  return {
+    brain: actual,
+    stats: {
+      hands: nHands,
+      sumaBB: Math.round(sumaBB * 100) / 100,
+      showdownPct: nHands > 0 ? showdownCount / nHands : 0,
+      reflects,
+      priorsMovidos: contarMovidos(actual.priors),
+    },
+  };
+}
+

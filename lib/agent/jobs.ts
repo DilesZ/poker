@@ -5,6 +5,8 @@ import { kvConfigurado, kvEscribirJSON, kvLeerJSON } from "../rooms/kv";
 
 export interface TrainJob {
   id: string;
+  /** "train" (sparring heurístico) o "liga" (cerebro vs sí mismo). */
+  kind?: string;
   status: "done" | "error";
   requested: number;
   done: number;

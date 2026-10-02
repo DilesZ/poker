@@ -64,6 +64,10 @@ export default function GlobalBrainPanel() {
   const [evalResultado, setEvalResultado] = useState<string | null>(null);
   const [evalError, setEvalError] = useState<string | null>(null);
   const [evalHist, setEvalHist] = useState<EvalHist[]>([]);
+  const [enLiga, setEnLiga] = useState(false);
+  const [ligaResultado, setLigaResultado] = useState<string | null>(null);
+  const [ligaTerminado, setLigaTerminado] = useState(false);
+  const [ligaError, setLigaError] = useState<string | null>(null);
   const cancelar = useRef(false);
 
   const cargar = useCallback(async () => {
@@ -216,6 +220,47 @@ export default function GlobalBrainPanel() {
 
   const maxAbsEval = Math.max(1, ...evalHist.map((e) => Math.abs(e.bb100)));
 
+  async function jugarLigaAhora() {
+    if (entrenando || evaluando || enLiga) return;
+    setEnLiga(true);
+    setLigaResultado(null);
+    setLigaTerminado(false);
+    setLigaError(null);
+    try {
+      const semilla = (Date.now() ^ Math.floor(Math.random() * 1e9)) >>> 0;
+      const res = await fetch("/api/agent/liga", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ hands: 500, seed: semilla }),
+      });
+      const data = (await res.json()) as {
+        hands?: number;
+        reflects?: number;
+        sumaBB?: number;
+        showdownPct?: number;
+        handsPlayed?: number;
+        error?: string;
+      };
+      if (res.status === 501) {
+        setLigaResultado("Liga aún no disponible (501).");
+        return;
+      }
+      if (!res.ok || data.error) {
+        setLigaError(data.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      setLigaResultado(
+        `✅ Liga completada: ${data.hands ?? 500} manos × 6 cerebros (${data.reflects ?? "?"} reflects) · sumaBB ${data.sumaBB ?? "?"} · total ${data.handsPlayed ?? "?"}`,
+      );
+      setLigaTerminado(true);
+      await cargar();
+    } catch (e) {
+      setLigaError(e instanceof Error ? e.message : "fallo de red");
+    } finally {
+      setEnLiga(false);
+    }
+  }
+
   return (
     <section className="poker-panel" aria-label="Cerebro global del servidor">
       <h2>🧠 Cerebro global (servidor)</h2>
@@ -324,6 +369,30 @@ export default function GlobalBrainPanel() {
         persiste entre PCs vía KV (TTL 30 días). También puedes consultar{" "}
         <code>/api/agent/train</code> (GET) y <code>/api/agent/brain</code>.
       </p>
+      <section aria-label="Liga autónoma">
+        <h3>🤖 Liga autónoma (juega solo)</h3>
+        <p className="poker-muted">
+          El cerebro juega los 6 asientos contra sí mismo y aprende de cada mano, sin que
+          juegues tú. En servidor corre cada hora (cron Vercel, 500 manos) y desde tu PC
+          con <code>npm run liga</code>. Al terminar verás ✅ abajo.
+        </p>
+        {ligaError ? <p className="poker-muted">Aviso liga: {ligaError}</p> : null}
+        {ligaResultado ? (
+          <p className={ligaTerminado ? "train-ok" : "poker-muted"} role="status">
+            {ligaResultado}
+          </p>
+        ) : null}
+        <div className="train-actions">
+          <button
+            type="button"
+            className="btn-ps btn-new"
+            disabled={entrenando || evaluando || enLiga}
+            onClick={() => void jugarLigaAhora()}
+          >
+            {enLiga ? "Jugando liga…" : "Jugar liga 500 en servidor"}
+          </button>
+        </div>
+      </section>
       <section aria-label="Evaluación del cerebro">
         <h3>📏 Evaluación (¿gana?)</h3>
         <p className="poker-muted">
