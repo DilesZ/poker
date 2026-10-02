@@ -1,5 +1,9 @@
 import { createBrain } from "@/lib/agent/brain";
-import { loadGlobalBrainServer, mergeAndSaveServer } from "@/lib/agent/globalStore";
+import {
+  loadGlobalBrainServer,
+  mergeAndSaveServer,
+  saveGlobalBrainServer,
+} from "@/lib/agent/globalStore";
 import { loadLatestTrainJob, recordTrainJob } from "@/lib/agent/jobs";
 
 export const dynamic = "force-dynamic";
@@ -71,6 +75,7 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     const base = (await loadGlobalBrainServer()) ?? createBrain();
+    const baseHands = base.handsPlayed ?? 0;
     let entrenado: unknown;
     try {
       const f = fn as (...args: unknown[]) => Promise<unknown>;
@@ -126,6 +131,9 @@ export async function POST(request: Request): Promise<Response> {
         const merged = await mergeAndSaveServer(
           brainNuevo as Parameters<typeof mergeAndSaveServer>[0],
         );
+        // merge suma manos (global+sala): corrige a global+manos nuevas reales.
+        merged.handsPlayed = baseHands + handsHechas;
+        await saveGlobalBrainServer(merged);
         handsPlayed = merged.handsPlayed;
       } catch {
         const hp = (brainNuevo as { handsPlayed?: unknown }).handsPlayed;

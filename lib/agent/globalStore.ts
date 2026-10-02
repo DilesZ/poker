@@ -32,7 +32,7 @@ export function __clearServerCache(): void {
 }
 
 function clonar(b: Brain): Brain {
-  return {
+  const c: Record<string, unknown> = {
     handsPlayed: b.handsPlayed,
     lessons: [...(b.lessons ?? [])],
     priors: { ...(b.priors ?? {}) },
@@ -40,6 +40,10 @@ function clonar(b: Brain): Brain {
     epsilon: b.epsilon,
     counts: { ...(b.counts ?? {}) },
   };
+  // ConMeta.updatedAt no está en Brain: se conserva si venía (lo lee el panel).
+  const u = (b as unknown as Record<string, unknown>).updatedAt;
+  if (typeof u === "number" && Number.isFinite(u)) c.updatedAt = u;
+  return c as unknown as Brain;
 }
 
 function conUpdatedAt(b: Brain, ts: number): ConMeta {
