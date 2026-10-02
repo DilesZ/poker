@@ -29,27 +29,36 @@ function formatDate(ts: Checkpoint["timestamp"]): string {
 
 export default function CheckpointsList() {
   const [items, setItems] = useState<Checkpoint[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Empieza cargando: la primera carga la hace el efecto de montaje sin
+  // setState síncrono (los sets viven solo en continuaciones async).
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const procesarRespuesta = useCallback(
+    async (res: Response): Promise<void> => {
+      const data: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const msg =
+          data !== null && typeof data === "object" && "error" in data
+            ? String((data as Record<string, unknown>).error)
+            : `Error HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+      const list =
+        data !== null && typeof data === "object" && Array.isArray((data as { checkpoints?: unknown }).checkpoints)
+          ? ((data as { checkpoints: Checkpoint[] }).checkpoints ?? [])
+          : [];
+      setItems(list);
+    },
+    [],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const res = await fetch("/api/cfr/checkpoints", { cache: "no-store" });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) {
-        const msg =
-          data && typeof data === "object" && "error" in data
-            ? String((data as Record<string, unknown>).error)
-            : `Error HTTP ${res.status}`;
-        throw new Error(msg);
-      }
-      const list =
-        data && typeof data === "object" && Array.isArray((data as { checkpoints?: unknown }).checkpoints)
-          ? ((data as { checkpoints: Checkpoint[] }).checkpoints ?? [])
-          : [];
-      setItems(list);
+      await procesarRespuesta(res);
     } catch (e) {
       setError(
         e instanceof Error
@@ -59,11 +68,30 @@ export default function CheckpointsList() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [procesarRespuesta]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    let vivo = true;
+    fetch("/api/cfr/checkpoints", { cache: "no-store" })
+      .then((res) => {
+        if (!vivo) return;
+        return procesarRespuesta(res);
+      })
+      .catch((e: unknown) => {
+        if (!vivo) return;
+        setError(
+          e instanceof Error
+            ? `No se pudieron cargar los checkpoints: ${e.message}`
+            : "No se pudieron cargar los checkpoints.",
+        );
+      })
+      .finally(() => {
+        if (vivo) setLoading(false);
+      });
+    return () => {
+      vivo = false;
+    };
+  }, [procesarRespuesta]);
 
   return (
     <section className="train-panel" aria-label="Checkpoints CFR">
