@@ -8,6 +8,8 @@ interface Resumen {
   winrate: number;
   priorsAprendidos: number;
   updatedAt: number | null;
+  avgDeltaBB100: number;
+  manosConDelta: number;
 }
 
 interface TrainResp {
@@ -27,6 +29,8 @@ const VACIO: Resumen = {
   winrate: 0,
   priorsAprendidos: 0,
   updatedAt: null,
+  avgDeltaBB100: 0,
+  manosConDelta: 0,
 };
 
 const TROZO = 1000;
@@ -54,6 +58,8 @@ export default function GlobalBrainPanel() {
         winrate: typeof data.winrate === "number" ? data.winrate : 0,
         priorsAprendidos: typeof data.priorsAprendidos === "number" ? data.priorsAprendidos : 0,
         updatedAt: typeof data.updatedAt === "number" ? data.updatedAt : null,
+        avgDeltaBB100: typeof data.avgDeltaBB100 === "number" ? data.avgDeltaBB100 : 0,
+        manosConDelta: typeof data.manosConDelta === "number" ? data.manosConDelta : 0,
       });
       setError(null);
     } catch (e) {
@@ -153,11 +159,23 @@ export default function GlobalBrainPanel() {
             <dd>{(resumen.winrate * 100).toFixed(1)}%</dd>
           </div>
           <div>
+            <dt>EV (bb/100)</dt>
+            <dd>
+              {resumen.avgDeltaBB100 >= 0 ? "+" : ""}
+              {resumen.avgDeltaBB100.toFixed(1)}
+            </dd>
+          </div>
+          <div>
             <dt>Priors aprendidos</dt>
             <dd>{resumen.priorsAprendidos}</dd>
           </div>
         </dl>
       )}
+      <p className="poker-muted">
+        El winrate de lecciones engaña: la mayoría de manos pierde las ciegas por diseño
+        (hasta foldeando bien). La métrica que importa es el EV en bb/100: si sube, el
+        juego gana fichas.
+      </p>
       {error ? <p className="poker-muted">Aviso: {error}</p> : null}
       {resultado && !terminado ? (
         <p className="poker-muted" role="status">

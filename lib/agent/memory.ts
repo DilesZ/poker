@@ -80,6 +80,16 @@ export function migrateBrain(raw: unknown): Brain {
       }
     }
   }
+  const baselinesRaw = r.baselines;
+  let baselines: Record<string, number> = { ...(base.baselines ?? {}) };
+  if (baselinesRaw && typeof baselinesRaw === "object" && !Array.isArray(baselinesRaw)) {
+    baselines = {};
+    for (const [k, v] of Object.entries(baselinesRaw as Record<string, unknown>)) {
+      if (typeof v === "number" && Number.isFinite(v)) {
+        baselines[k] = Math.max(-10000, Math.min(10000, v));
+      }
+    }
+  }
   return {
     handsPlayed,
     lessons: [...lessons],
@@ -87,6 +97,7 @@ export function migrateBrain(raw: unknown): Brain {
     beliefs: beliefs.length > 0 ? [...beliefs] : [...base.beliefs],
     epsilon,
     counts,
+    baselines,
   };
 }
 
@@ -98,6 +109,7 @@ function clonar(b: Brain): Brain {
     beliefs: [...(b.beliefs ?? [])],
     epsilon: b.epsilon,
     counts: { ...(b.counts ?? {}) },
+    baselines: { ...(b.baselines ?? {}) },
   };
 }
 
@@ -129,6 +141,7 @@ export function saveGlobalBrain(brain: Brain): void {
       priors,
       beliefs: [...(brain.beliefs ?? [])],
       counts: { ...(brain.counts ?? {}) },
+      baselines: { ...(brain.baselines ?? {}) },
     };
     holder().current = payload;
   } catch {
@@ -192,6 +205,20 @@ export function mergeBrains(global: Brain, room: Brain): Brain {
   for (const [k, v] of Object.entries(room.counts ?? {})) {
     counts[k] = (counts[k] ?? 0) + (v ?? 0);
   }
+  // Baselines: media ponderada por visitas (misma ponderación que priors).
+  const baselines: Record<string, number> = { ...(global.baselines ?? {}) };
+  for (const [k, v] of Object.entries(room.baselines ?? {})) {
+    if (typeof v !== "number" || !Number.isFinite(v)) continue;
+    const g = baselines[k];
+    if (typeof g !== "number" || !Number.isFinite(g)) {
+      baselines[k] = v;
+      continue;
+    }
+    const wG = peso(global, k);
+    const wR = peso(room, k);
+    const tot = wG + wR;
+    baselines[k] = tot > 0 ? (g * wG + v * wR) / tot : (g + v) / 2;
+  }
   return {
     handsPlayed,
     lessons,
@@ -199,5 +226,6 @@ export function mergeBrains(global: Brain, room: Brain): Brain {
     beliefs: beliefs.length > 0 ? beliefs : ["estoy aprendiendo"],
     epsilon,
     counts,
+    baselines,
   };
 }

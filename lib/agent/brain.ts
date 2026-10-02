@@ -34,6 +34,10 @@ export interface Lesson {
   actionsCredited?: number;
   /** Bucket de fuerza V3 de la mano (weak|mid|strong). Solo informativo. */
   strengthBucket?: string;
+  /** Delta de fichas de la mano (para la métrica EV bb/100). */
+  stackDelta?: number;
+  /** Si la mano llegó a showdown (métrica showdown%). */
+  showdown?: boolean;
 }
 
 export interface Brain {
@@ -45,6 +49,9 @@ export interface Brain {
   epsilon: number;
   /** Contador por clave de situación (ej. "flop/hasPot/HU" → manos vistas). */
   counts?: Record<string, number>;
+  /** Baseline por situación: delta medio esperado (EMA). La mayoría de manos
+   * pierde las ciegas; solo aprende lo mejor/peor que ese coste (ventaja). */
+  baselines?: Record<string, number>;
 }
 
 export type BrainAction = { type: "fold" | "check" | "call" | "raise" | "allin"; size?: number };
@@ -86,8 +93,13 @@ export interface HandRecord {
   numRivales?: number;
 }
 
-const STEP_WIN = 0.08;
-const STEP_LOSS = -0.06;
+const STEP_VENTAJA = 0.055;
+const ESCALA_VENTAJA = 100;
+const BASE_INICIAL = -5;
+const ALFA_BASE = 0.15;
+/** Fold perdiendo como mucho las dos ciegas (10+20): fold correcto, premia. */
+const GOOD_FOLD_MAX_PERDIDA = -30;
+const GOOD_FOLD_VENTAJA = 0.15;
 const DESCUENTO = 0.8;
 const CONTRA_PESO = 0.15;
 const PRIOR_MIN = 0.05;
@@ -142,6 +154,7 @@ export function createBrain(): Brain {
     beliefs: ["estoy aprendiendo"],
     epsilon: 0.9,
     counts: {},
+    baselines: {},
   };
 }
 
@@ -203,7 +216,14 @@ export function chooseBrainAction(brain: Brain, legal: BrainLegal, ctx: BrainCon
   return conTamano(mejor, legal);
 }
 
-/** Aprende de la mano: crédito total a TODA la actionHistory + decae epsilon. */
+/** Aprende de la mano: ventaja vs baseline + crédito total a actionHistory.
+ *
+ * Por qué ventaja y no won/lost: en 6-max la mayoría de manos pierde las
+ * ciegas aunque se juegue bien (el héroe gana ~1/6 de botes con estrategia
+ * igualada). Castigar toda pérdida empuja todos los priors al suelo 0.05 y
+ * enseña que "foldear es malo". Con baseline EMA por situación solo cuenta lo
+ * mejor/peor que el coste esperado, y foldear perdiendo como mucho las dos
+ * ciegas suma (fold correcto). */
 export function reflectOnHand(
   brain: Brain,
   record: HandRecord,
@@ -213,12 +233,29 @@ export function reflectOnHand(
   const historial = record.actionHistory.filter(
     (a) => a.street !== "showdown" && a.street !== "done",
   );
+  const delta = Number.isFinite(record.stackDelta) ? record.stackDelta : 0;
+
+  // Baseline EMA de la situación + ventaja normalizada (-1.5…1.5).
+  const baselines: Record<string, number> = { ...(brain.baselines ?? {}) };
+  const previo = baselines[claveUltima];
+  const baseline =
+    typeof previo === "number" && Number.isFinite(previo) ? previo : BASE_INICIAL;
+  let ventaja = (delta - baseline) / ESCALA_VENTAJA;
+  const ultimoItem = historial[historial.length - 1] as
+    | { street: string; action: string }
+    | undefined;
+  const tipoUltAccion = ultimoItem ? parsearAccion(ultimoItem.action)?.tipo : undefined;
+  if (tipoUltAccion === "fold" && delta >= GOOD_FOLD_MAX_PERDIDA) {
+    ventaja = Math.max(ventaja, GOOD_FOLD_VENTAJA);
+  }
+  const ventajaC = limitar(ventaja, -1, 1);
+  const buena = ventaja > 0;
+  baselines[claveUltima] = redondear(baseline + ALFA_BASE * (delta - baseline), 3);
 
   const priors = { ...brain.priors };
-  // Magnitud V2: botes grandes enseñan más.
+  // Magnitud: botes grandes enseñan más (0.5-1.5).
   const magnitude =
-    0.5 + Math.min(1, Math.abs(record.stackDelta) / Math.max(50, record.potWon + 20));
-  const base = record.won ? STEP_WIN : STEP_LOSS;
+    0.5 + Math.min(1, Math.abs(delta) / Math.max(50, record.potWon + 20));
 
   let anteriorUltima = 0.5;
   let nuevoUltimo = 0.5;
@@ -231,7 +268,7 @@ export function reflectOnHand(
     const item = historial[i] as { street: string; action: string };
     const d = n - 1 - i;
     const discount = Math.pow(DESCUENTO, d);
-    const step = base * discount * magnitude;
+    const step = STEP_VENTAJA * ventajaC * discount * magnitude;
     // Clave de esta acción histórica (para la última, usa la clave oficial).
     const esUltima = i === n - 1;
     const claveAccion = esUltima ? claveUltima : claveParaAccion(item.street, item.action, record);
@@ -251,9 +288,9 @@ export function reflectOnHand(
   }
 
   // Contrapartida contrafactual: en la situación de la última acción,
-  // los tipos NO usados se mueven en -step*0.15 (si ganó la usada, bajan).
+  // los tipos NO usados se mueven en -step*0.15 (si la usada fue buena, bajan).
   if (tipoUltimo && n > 0) {
-    const stepUltimo = base * 1 * magnitude; // d=0 → discount 1
+    const stepUltimo = STEP_VENTAJA * ventajaC * 1 * magnitude; // d=0 → discount 1
     const contra = -stepUltimo * CONTRA_PESO;
     for (const tipo of TIPOS) {
       if (tipo === tipoUltimo) continue;
@@ -276,6 +313,7 @@ export function reflectOnHand(
       tipo: tipoUltimo,
       importe: importeUltimo,
       record,
+      buena,
       anterior: anteriorUltima,
       nuevo: nuevoUltimo,
       handsPlayed,
@@ -305,7 +343,7 @@ export function reflectOnHand(
       : brain.beliefs;
 
   return {
-    brain: { handsPlayed, lessons, priors, beliefs, epsilon, counts },
+    brain: { handsPlayed, lessons, priors, beliefs, epsilon, counts, baselines },
     lesson,
   };
 }
@@ -416,6 +454,8 @@ interface LessonDatos {
   tipo: BrainAction["type"];
   importe: number;
   record: HandRecord;
+  /** Ventaja>0: la mano salió mejor que el coste esperado (no won binario). */
+  buena: boolean;
   anterior: number;
   nuevo: number;
   handsPlayed: number;
@@ -425,11 +465,11 @@ interface LessonDatos {
 }
 
 function crearLesson(datos: LessonDatos): Lesson {
-  const { clave, tipo, importe, record, anterior, nuevo, handsPlayed } = datos;
+  const { clave, tipo, importe, record, buena, anterior, nuevo, handsPlayed } = datos;
   const calle = clave.split("/")[0] ?? "preflop";
   const ts = Date.now();
   const base = importe > 0 ? `${tipo} ${importe} en ${calle}` : `${tipo} en ${calle}`;
-  const situation = `${base} ${contextoSituacion(record, tipo)}`;
+  const situation = `${base} ${contextoSituacion(record, tipo, buena)}`;
   const change =
     nuevo === anterior
       ? `mantuve en ${nuevo.toFixed(2)} la prior de ${VERBOS[tipo]} en ${calle}`
@@ -439,8 +479,8 @@ function crearLesson(datos: LessonDatos): Lesson {
   return {
     id: `L${String(handsPlayed).padStart(4, "0")}-${ts}`,
     situation,
-    outcome: record.won ? "victoria" : "derrota",
-    insight: insightDe(record, tipo),
+    outcome: buena ? "victoria" : "derrota",
+    insight: insightDe(buena, tipo),
     change,
     handsPlayed,
     ts,
@@ -451,6 +491,8 @@ function crearLesson(datos: LessonDatos): Lesson {
     ...(typeof datos.strengthBucket === "string"
       ? { strengthBucket: datos.strengthBucket }
       : {}),
+    ...(Number.isFinite(record.stackDelta) ? { stackDelta: record.stackDelta } : {}),
+    ...(typeof record.showdown === "boolean" ? { showdown: record.showdown } : {}),
   };
 }
 
@@ -463,16 +505,20 @@ function bucketDeRecord(record: HandRecord): string {
   }
 }
 
-function contextoSituacion(record: HandRecord, tipo: BrainAction["type"]): string {
+function contextoSituacion(
+  record: HandRecord,
+  tipo: BrainAction["type"],
+  buena: boolean,
+): string {
   if (record.showdown) return "y fuimos a showdown";
-  if (record.won) return "sin enseñar cartas";
+  if (buena) return "sin enseñar cartas";
   if (tipo === "call") return "sin mostrarme fuerza";
   if (tipo === "fold") return "dejé la mano";
   return "y lo resolví en la calle";
 }
 
-function insightDe(record: HandRecord, tipo: BrainAction["type"]): string {
-  if (record.won) {
+function insightDe(buena: boolean, tipo: BrainAction["type"]): string {
+  if (buena) {
     if (tipo === "call") return "gané el bote mostrando resistencia";
     if (tipo === "raise" || tipo === "allin") return "gané el bote presionando con mi apuesta";
     if (tipo === "check") return "gané el bote gratis en la calle";

@@ -51,7 +51,8 @@ describe("brain", () => {
     const { brain: aprendido, lesson } = reflectOnHand(brain, record);
 
     expect(aprendido.handsPlayed).toBe(1);
-    expect(aprendido.priors["flop/hasPot/call"]).toBeCloseTo(0.576, 6);
+    // Ventaja: (90-(-5))/100=0.95 → step 0.055*0.95*0.95≈0.0496 → 0.55.
+    expect(aprendido.priors["flop/hasPot/call"]).toBeCloseTo(0.55, 6);
     // Inmutable: el cerebro original no se toca.
     expect(brain.priors["flop/hasPot/call"]).toBe(0.5);
     expect(brain.handsPlayed).toBe(0);
@@ -60,7 +61,7 @@ describe("brain", () => {
     expect(lesson?.outcome).toBe("victoria");
     expect(lesson?.situation).toContain("call 60 en flop");
     expect(lesson?.insight).toContain("gané el bote");
-    expect(lesson?.change).toBe("subí a 0.58 la prior de llamar en flop");
+    expect(lesson?.change).toBe("subí a 0.55 la prior de llamar en flop");
     expect(aprendido.lessons).toHaveLength(1);
   });
 
@@ -78,10 +79,11 @@ describe("brain", () => {
     const { brain: aprendido, lesson } = reflectOnHand(brain, record);
 
     // Apertura de bote sin precio: clave flop/toCall0 (sin marcador "(precio").
-    expect(aprendido.priors["flop/toCall0/raise"]).toBeCloseTo(0.41, 6);
+    // Ventaja: (-80-(-5))/100=-0.75 → step 0.055*-0.75*1.5≈-0.062 → 0.438.
+    expect(aprendido.priors["flop/toCall0/raise"]).toBeCloseTo(0.438, 6);
     expect(aprendido.handsPlayed).toBe(1);
     expect(lesson?.outcome).toBe("derrota");
-    expect(lesson?.change).toBe("bajé a 0.41 la prior de subir en flop");
+    expect(lesson?.change).toBe("bajé a 0.44 la prior de subir en flop");
     expect(lesson?.handsPlayed).toBe(1);
   });
 

@@ -39,6 +39,7 @@ function clonar(b: Brain): Brain {
     beliefs: [...(b.beliefs ?? [])],
     epsilon: b.epsilon,
     counts: { ...(b.counts ?? {}) },
+    baselines: { ...(b.baselines ?? {}) },
   };
   // ConMeta.updatedAt no está en Brain: se conserva si venía (lo lee el panel).
   const u = (b as unknown as Record<string, unknown>).updatedAt;
