@@ -1,4 +1,4 @@
-import { loadGlobalBrainServer, mergeAndSaveServer } from "@/lib/agent/globalStore";
+import { loadGlobalBrainServer, mergeAndSaveServer, saveGlobalBrainServer } from "@/lib/agent/globalStore";
 import type { Brain } from "@/lib/agent/brain";
 
 export const dynamic = "force-dynamic";
@@ -59,6 +59,8 @@ export async function GET(request: Request): Promise<Response> {
         ...base,
         priors: brain?.priors ?? {},
         lessons: (brain?.lessons ?? []).slice(-10),
+        counts: brain?.counts ?? {},
+        baselines: brain?.baselines ?? {},
       },
       { headers: { "cache-control": "no-store" } },
     );
@@ -82,6 +84,24 @@ export async function POST(request: Request): Promise<Response> {
       cuerpo && typeof cuerpo === "object" && !Array.isArray(cuerpo)
         ? (cuerpo as Record<string, unknown>).brain
         : null;
+    const reset =
+      cuerpo && typeof cuerpo === "object" && !Array.isArray(cuerpo)
+        ? (cuerpo as Record<string, unknown>).reset === true
+        : false;
+    if (reset) {
+      // Reset limpio: descarta el historial (datos de reglas viejas) y parte
+      // de cero o del cerebro subido. Sin esto, 89k manos con la regla binaria
+      // rota ("foldear es malo") ahogarían el aprendizaje nuevo por peso.
+      const { createBrain } = await import("@/lib/agent/brain");
+      const { migrateBrain } = await import("@/lib/agent/memory");
+      const fresco =
+        subido && typeof subido === "object" && !Array.isArray(subido)
+          ? migrateBrain(subido)
+          : createBrain();
+      fresco.handsPlayed = 0;
+      await saveGlobalBrainServer(fresco);
+      return Response.json({ ok: true, reset: true }, { headers: { "cache-control": "no-store" } });
+    }
     if (subido && typeof subido === "object" && !Array.isArray(subido)) {
       const merged = await mergeAndSaveServer(subido as Brain);
       return Response.json(resumen(merged), { headers: { "cache-control": "no-store" } });
