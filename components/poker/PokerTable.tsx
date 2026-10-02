@@ -30,13 +30,14 @@ export function PokerTable({ game }: { game: GameState | null }) {
   if (!game) {
     return (
       <div className="poker-felt poker-empty" role="status">
+        <span className="poker-eyebrow">Mesa lista</span>
         <p>Pulsa «Nueva mano» para repartir.</p>
         <button
           type="button"
           className="btn-ps btn-new"
           onClick={startHand}
         >
-          Nueva mano
+          Repartir cartas
         </button>
       </div>
     );
@@ -52,6 +53,7 @@ export function PokerTable({ game }: { game: GameState | null }) {
       aria-label="Mesa de poker 6-max"
     >
       <div className="poker-pot" aria-label={`Bote ${game.pot} fichas`}>
+        <span className="poker-pot-dot" aria-hidden="true" />
         Bote: {potLabel}
       </div>
       <div className="poker-board">

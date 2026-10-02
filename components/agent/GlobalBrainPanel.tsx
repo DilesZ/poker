@@ -263,7 +263,7 @@ export default function GlobalBrainPanel() {
 
   return (
     <section className="poker-panel" aria-label="Cerebro global del servidor">
-      <h2>🧠 Cerebro global (servidor)</h2>
+      <h2>Cerebro global · servidor</h2>
       {cargando ? (
         <p className="poker-muted">Cargando…</p>
       ) : (
@@ -370,7 +370,7 @@ export default function GlobalBrainPanel() {
         <code>/api/agent/train</code> (GET) y <code>/api/agent/brain</code>.
       </p>
       <section aria-label="Liga autónoma">
-        <h3>🤖 Liga autónoma (juega solo)</h3>
+        <h3>Liga autónoma · juega solo</h3>
         <p className="poker-muted">
           El cerebro juega los 6 asientos contra sí mismo y aprende de cada mano, sin que
           juegues tú. En servidor corre cada hora (cron Vercel, 500 manos) y desde tu PC
@@ -394,7 +394,7 @@ export default function GlobalBrainPanel() {
         </div>
       </section>
       <section aria-label="Evaluación del cerebro">
-        <h3>📏 Evaluación (¿gana?)</h3>
+        <h3>Evaluación · ¿gana?</h3>
         <p className="poker-muted">
           Solo mide, no modifica el cerebro: juega 1000 manos del cerebro contra la heurística.
           Criterio de rentable: media &gt;+2 bb/100 con límite inferior del IC95% &gt;0 en 20k

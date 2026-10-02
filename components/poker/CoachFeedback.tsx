@@ -34,29 +34,20 @@ export function CoachFeedback() {
   if (!advice) {
     return (
       <section className="poker-panel poker-coach" aria-label="Consejo del coach">
-        <h2>Coach</h2>
-        <p>Inicia una mano para recibir consejo.</p>
+        <h2>Coach en vivo</h2>
+        <p className="poker-muted">Inicia una mano para recibir consejo.</p>
       </section>
     );
   }
 
   return (
     <section className="poker-panel poker-coach" aria-label="Consejo del coach">
-      <h2>Coach</h2>
-      <span
-        style={{
-          display: "inline-block",
-          padding: "2px 10px",
-          borderRadius: 999,
-          fontWeight: 700,
-          color: "#fff",
-          background: advice.good ? "#1a9e4b" : "#c93a3a",
-        }}
-      >
-        {advice.toCall <= 0 ? "FREE" : advice.good ? "+EV" : "−EV"}
+      <h2>Coach en vivo</h2>
+      <span className={`coach-badge${advice.good ? " good" : " bad"}`}>
+        {advice.toCall <= 0 ? "GRATIS" : advice.good ? "+EV · PAGA" : "−EV · FOLD"}
       </span>
       <p>{advice.text}</p>
-      <p style={{ opacity: 0.8 }}>
+      <p className="coach-numbers">
         Equity {(advice.equity * 100).toFixed(1)}% · Precio {(advice.price * 100).toFixed(1)}% ·
         Igualar {advice.toCall}
       </p>

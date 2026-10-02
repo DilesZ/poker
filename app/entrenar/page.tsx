@@ -13,7 +13,10 @@ export default function EntrenarPage() {
   return (
     <>
       <header className="poker-header">
-        <h1>🤖 Entrenar + 🏆 Torneo</h1>
+        <span className="poker-eyebrow">Laboratorio del agente</span>
+        <h1>
+          Entrenar <span className="gold">y torneo</span>
+        </h1>
         <p>
           Self-play local y SNG de demostración.{" "}
           <Link href="/">← Volver a la mesa</Link>

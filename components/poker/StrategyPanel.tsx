@@ -13,7 +13,7 @@ export default function StrategyPanel() {
 
   return (
     <section className="poker-panel" aria-label="Estrategia">
-      <h2>📚 Estrategia</h2>
+      <h2>Estrategia</h2>
       <div className="poker-tabs" role="tablist">
         {TABS.map((t) => (
           <button

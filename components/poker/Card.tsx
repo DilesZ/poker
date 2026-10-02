@@ -44,7 +44,9 @@ export default function Card({
         className={`poker-card back${small ? " small" : ""}`}
         aria-label="Carta oculta"
       >
-        <span aria-hidden="true">◍</span>
+        <span className="poker-card-back-emblem" aria-hidden="true">
+          ♠
+        </span>
       </div>
     );
   }
@@ -55,8 +57,16 @@ export default function Card({
       className={`poker-card${small ? " small" : ""}${red ? " red" : ""}`}
       aria-label={`${rankEs(card.rank)} de ${suitEs(card.suit)}`}
     >
+      <span className="poker-card-corner tl" aria-hidden="true">
+        <span>{label}</span>
+        <span>{card.suit}</span>
+      </span>
       <span className="poker-card-rank">{label}</span>
       <span className="poker-card-suit">{card.suit}</span>
+      <span className="poker-card-corner br" aria-hidden="true">
+        <span>{label}</span>
+        <span>{card.suit}</span>
+      </span>
     </div>
   );
 }

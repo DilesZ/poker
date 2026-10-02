@@ -17,6 +17,7 @@ export default function Seat({
   style?: CSSProperties;
 }) {
   const visible = player.isHero || showCards;
+  const inicial = (player.isHero ? "T" : (player.name.trim()[0] ?? "?")).toUpperCase();
   const groupLabel = `${player.isHero ? "Hero (tú)" : player.name} — Stack ${player.stack}, apuesta ${player.bet}${player.folded ? ", foldeado" : ""}${highlight ? ", ganador" : ""}`;
   return (
     <div
@@ -25,17 +26,22 @@ export default function Seat({
       role="group"
       aria-label={groupLabel}
     >
-      <div className="poker-seat-name">
-        {player.isHero ? "Hero (tú)" : player.name}
-        {isDealer && (
-          <span
-            className="poker-dealer"
-            title="Botón dealer"
-            aria-label="Botón dealer"
-          >
-            D
-          </span>
-        )}
+      <div className="poker-seat-top">
+        <span className="poker-avatar" aria-hidden="true">
+          {inicial}
+        </span>
+        <span className="poker-seat-name">
+          {player.isHero ? "Hero (tú)" : player.name}
+          {isDealer && (
+            <span
+              className="poker-dealer"
+              title="Botón dealer"
+              aria-label="Botón dealer"
+            >
+              D
+            </span>
+          )}
+        </span>
       </div>
       <div className="poker-seat-cards">
         {player.hole.length === 0 || !visible ? (
@@ -49,17 +55,33 @@ export default function Seat({
           ))
         )}
       </div>
-      <div className="poker-seat-stack">
-        Stack {player.stack} · Bet {player.bet}
+      <div className="poker-seat-meta">
+        <span>
+          Stack <strong>{player.stack}</strong>
+        </span>
+        <span>
+          Apuesta <strong>{player.bet}</strong>
+        </span>
       </div>
-      {player.bet > 0 && <div className="poker-chip">🪙 {player.bet}</div>}
-      {player.folded && <div className="poker-folded">Fold</div>}
+      {player.bet > 0 && (
+        <div className="poker-chip">
+          <span className="poker-chip-disc" aria-hidden="true" />
+          {player.bet}
+        </div>
+      )}
+      {player.folded && (
+        <div>
+          <span className="poker-status poker-folded">Fold</span>
+        </div>
+      )}
       {player.allIn && !player.folded && (
-        <div className="poker-allin">ALL-IN</div>
+        <div>
+          <span className="poker-status poker-allin">All-in</span>
+        </div>
       )}
       {highlight && (
         <div className="poker-winner" aria-label="Ganador de la mano">
-          🏆 Ganador
+          ★ Ganador
         </div>
       )}
     </div>

@@ -178,7 +178,7 @@ export function AgentDiary({
 
   return (
     <section className="poker-panel diary-panel" aria-label="Diario del agente">
-      <h2>📓 Diario del agente</h2>
+      <h2>Diario del agente</h2>
       <p className="poker-muted">
         El agente empieza sin estrategia y aprende de cada mano.
       </p>

@@ -22,14 +22,20 @@ export default function HomePage() {
   return (
     <>
       <header className="poker-header">
-        <h1>♠ Poker Coach · 6-max vs IA</h1>
-        <p>Texas Hold&apos;em estilo PokerStars con coach integrado.</p>
-        <nav className="poker-nav" aria-label="Navegación principal">
-          <Link className="btn-ps btn-call" href="/salas">
-            Jugar en sala privada con amigos
+        <span className="poker-eyebrow">Coach + IA que aprende</span>
+        <h1>
+          Texas Hold&apos;em <span className="gold">6-max</span> contra la máquina
+        </h1>
+        <p>
+          Mesa estilo PokerStars con coach de pot odds en vivo, registro de errores
+          y un agente que aprende de cada mano que juegas.
+        </p>
+        <nav className="poker-nav" aria-label="Acciones principales">
+          <Link className="btn-ps btn-new" href="/salas">
+            Jugar en sala privada
           </Link>
-          <Link className="btn-ps btn-small" href="/entrenar">
-            Entrenar agente
+          <Link className="btn-ps btn-call" href="/entrenar">
+            Entrenar al agente
           </Link>
         </nav>
       </header>

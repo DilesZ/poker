@@ -21,46 +21,58 @@ export function HudBankroll() {
     resetStats();
   }
 
+  const resultClass =
+    lastResult === "V" ? "win" : lastResult === "D" ? "lose" : lastResult === "E" ? "draw" : "";
+  const resultLabel =
+    lastResult === "V" ? "Victoria" : lastResult === "D" ? "Derrota" : lastResult === "E" ? "Empate" : "—";
+
   return (
     <section className="poker-panel poker-hud" aria-label="HUD y bankroll">
       <h2>HUD · Bankroll</h2>
       <dl>
-        <dt>Stack Hero</dt>
-        <dd>{hero?.stack ?? "—"}</dd>
-        <dt>Bote</dt>
-        <dd>{game?.pot ?? "—"}</dd>
-        <dt>Calle</dt>
-        <dd>{game?.street ?? "—"}</dd>
-        <dt title="Porcentaje de manos ganadas sobre el total jugado">
-          Winrate
-        </dt>
-        <dd title="Porcentaje de manos ganadas sobre el total jugado">
-          {winrate}%
-        </dd>
-        <dt>Manos</dt>
-        <dd>{stats.manosTotales}</dd>
-        <dt title="Racha actual de victorias o derrotas consecutivas">
-          Racha
-        </dt>
-        <dd title="Racha actual de victorias o derrotas consecutivas">
-          {racha.tipo ? `${racha.tipo} ×${racha.count}` : "—"}
-        </dd>
-        <dt title="Voluntarily Put money In Pot: % de manos donde pagas voluntariamente más allá de la ciega">
-          VPIP
-        </dt>
-        <dd title="Voluntarily Put money In Pot: % de manos donde pagas voluntariamente más allá de la ciega">
-          {vpip}%
-        </dd>
-        <dt>Última mano</dt>
-        <dd>{lastResult ?? "—"}</dd>
+        <div>
+          <dt>Stack Hero</dt>
+          <dd>{hero?.stack ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>Bote</dt>
+          <dd>{game?.pot ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>Winrate</dt>
+          <dd title="Porcentaje de manos ganadas sobre el total jugado">
+            {winrate}%
+          </dd>
+        </div>
+        <div>
+          <dt>Manos</dt>
+          <dd>{stats.manosTotales}</dd>
+        </div>
+        <div>
+          <dt>Racha</dt>
+          <dd title="Racha actual de victorias o derrotas consecutivas">
+            {racha.tipo ? `${racha.tipo} ×${racha.count}` : "—"}
+          </dd>
+        </div>
+        <div>
+          <dt>VPIP</dt>
+          <dd title="Voluntarily Put money In Pot: % de manos donde pagas voluntariamente más allá de la ciega">
+            {vpip}%
+          </dd>
+        </div>
       </dl>
-      <button
-        type="button"
-        className="btn-ps btn-small"
-        onClick={handleReset}
-      >
-        Reiniciar stats
-      </button>
+      <div className="train-actions">
+        <span className={`result-badge${resultClass ? ` ${resultClass}` : ""}`}>
+          Última mano: {resultLabel}
+        </span>
+        <button
+          type="button"
+          className="btn-ps btn-small"
+          onClick={handleReset}
+        >
+          Reiniciar stats
+        </button>
+      </div>
     </section>
   );
 }

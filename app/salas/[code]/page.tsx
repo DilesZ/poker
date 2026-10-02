@@ -553,7 +553,7 @@ export default function SalaPage() {
     return (
       <>
         <header className="poker-header">
-          <h1>🔒 Sala</h1>
+          <h1>Sala</h1>
           <p>URL de sala no válida.</p>
         </header>
         <div className="salas-lobby">
@@ -575,7 +575,7 @@ export default function SalaPage() {
     return (
       <>
         <header className="poker-header">
-          <h1>🔒 Sala {code || "—"}</h1>
+          <h1>Sala {code || "—"}</h1>
           <p>Conectando con la sala…</p>
         </header>
         <div className="salas-lobby">

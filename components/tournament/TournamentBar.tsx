@@ -102,7 +102,7 @@ export default function TournamentBar() {
     <section className="tourney-bar" aria-label="Torneo SNG">
       <div className="tourney-head">
         <div>
-          <h2>🏆 SNG 6-max (demo local)</h2>
+          <h2>SNG 6-max · demo local</h2>
           <p className="poker-muted">
             Nivel {levelIdx + 1} · Ciegas {level.sb}/{level.bb}
             {level.ante > 0 ? ` · Ante ${level.ante}` : ""} · Mano{" "}

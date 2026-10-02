@@ -117,7 +117,7 @@ export default function SelfPlayPanel() {
 
   return (
     <section className="train-panel" aria-label="Entrenamiento self-play">
-      <h2>🤖 Self-play local (v0.2)</h2>
+      <h2>Self-play local</h2>
       <p className="poker-muted">
         La estrategia juega {TOTAL_HANDS} manos contra 5 copias de sí misma,
         en bloques de {CHUNK} para no congelar la página.

@@ -90,7 +90,10 @@ export default function SalasPage() {
   return (
     <>
       <header className="poker-header">
-        <h1>🔒 Salas privadas</h1>
+        <span className="poker-eyebrow">Multijugador + IA</span>
+        <h1>
+          Salas <span className="gold">privadas</span>
+        </h1>
         <p>
           Crea una mesa propia o entra con código.{" "}
           <Link href="/">← Volver a la mesa</Link>
