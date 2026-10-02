@@ -1,8 +1,7 @@
-// Tests de memoria global (5): roundtrip, merge, cap, SSR-safe, corrupt→default.
+// Tests de memoria de proceso (5): roundtrip, merge, cap, seguro-sin-entorno, corrupto→base.
 import { beforeEach, describe, expect, it } from "vitest";
 import { createBrain } from "./brain";
 import {
-  GLOBAL_KEY,
   __clearGlobalCache,
   loadGlobalBrain,
   mergeBrains,
@@ -10,24 +9,8 @@ import {
   saveGlobalBrain,
 } from "./memory";
 
-function stubStorage(): Map<string, string> {
-  const m = new Map<string, string>();
-  const fake = {
-    getItem: (k: string) => (m.has(k) ? (m.get(k) as string) : null),
-    setItem: (k: string, v: string) => {
-      m.set(k, v);
-    },
-    removeItem: (k: string) => {
-      m.delete(k);
-    },
-  };
-  (globalThis as unknown as Record<string, unknown>)["localStorage"] = fake;
-  return m;
-}
-
 beforeEach(() => {
   __clearGlobalCache();
-  stubStorage();
 });
 
 describe("memory", () => {
@@ -66,28 +49,22 @@ describe("memory", () => {
     expect(Object.keys(cargado?.priors ?? {}).length).toBeLessThanOrEqual(500);
   });
 
-  it("SSR-safe: no lanza sin almacenamiento", () => {
+  it("seguro sin entorno: no lanza y devuelve nulo o cerebro", () => {
     __clearGlobalCache();
-    delete (globalThis as unknown as Record<string, unknown>)["localStorage"];
     let resultado: unknown;
     expect(() => {
       resultado = loadGlobalBrain();
     }).not.toThrow();
     expect(resultado === null || typeof resultado === "object").toBe(true);
     expect(() => saveGlobalBrain(createBrain())).not.toThrow();
-    stubStorage();
   });
 
-  it("corrupt→default: JSON roto o sin priors devuelve cerebro base", () => {
-    const store = stubStorage();
-    store.set(GLOBAL_KEY, "%%%no-json%%%");
+  it("corrupto→base: basura o sin priors devuelve cerebro base", () => {
     __clearGlobalCache();
     const cargado = loadGlobalBrain();
-    expect(cargado).not.toBeNull();
-    expect(cargado?.handsPlayed).toBe(0);
-    expect(cargado?.priors["flop/hasPot/call"]).toBe(0.5);
-    // migrate directo con basura también da base
+    expect(cargado).toBeNull();
     expect(migrateBrain(null).handsPlayed).toBe(0);
     expect(migrateBrain({ hola: 1 }).priors["flop/hasPot/call"]).toBe(0.5);
+    expect(migrateBrain("%%%no-json%%%").handsPlayed).toBe(0);
   });
 });

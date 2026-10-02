@@ -9,6 +9,7 @@ import {
 } from "../agent/brain";
 import { loadGlobalBrain, mergeBrains, saveGlobalBrain } from "../agent/memory";
 import { dreamConsolidate } from "../agent/dream";
+import { estimateStrength } from "../training/selfplay";
 import { buildHandRecord, type AccionMano } from "../agent/reflection";
 import { newDeck, shuffle } from "../poker/deck";
 import { advanceStreet, deal, handName, refreshPot, showdown } from "../poker/game";
@@ -350,6 +351,7 @@ export function construirVista(room: Room, clientId?: string): RoomView {
   const asientos = new Set(room.players.map((p) => p.seat));
   const yo = clientId ? room.players.find((p) => p.clientId === clientId) : undefined;
   const mias = yo ? e.players.find((p) => p.id === yo.seat)?.hole : undefined;
+  const opponentLoose = calcularLooseGlobal(e);
   return {
     code: room.code,
     players: room.players.map((p) => ({
@@ -380,6 +382,7 @@ export function construirVista(room: Room, clientId?: string): RoomView {
       handsPlayed: room.brain.handsPlayed,
       epsilon: room.brain.epsilon,
       lessonsCount: room.brain.lessons.length,
+      ...(opponentLoose !== undefined ? { opponentLoose } : {}),
     },
   };
 }
@@ -527,6 +530,13 @@ function legales(e: EstadoSalas, p: PlayerState): BrainLegal {
 
 function contexto(e: EstadoSalas, p: PlayerState): BrainContext {
   const rivales = e.players.filter((x) => !x.folded && x.id !== p.id).length;
+  let strength = 0.5;
+  try {
+    strength = estimateStrength(p.hole, e.board);
+  } catch {
+    strength = 0.5;
+  }
+  const rivalLoose = calcularRivalLoose(e, p.id);
   return {
     street: e.street,
     boardLen: e.board.length,
@@ -534,7 +544,53 @@ function contexto(e: EstadoSalas, p: PlayerState): BrainContext {
     pot: e.pot,
     toCall: Math.max(0, e.currentBet - p.bet),
     numRivales: rivales,
-  };
+    strength,
+    rivalLoose,
+  } as BrainContext;
+}
+
+/** VPIP medio de los rivales activos (0-1) si hay ≥3 manos por rival; si no, undefined. */
+function calcularRivalLoose(e: EstadoSalas, selfId: number): number | undefined {
+  try {
+    const stats = e.opponentStats;
+    if (!stats) return undefined;
+    const ratios: number[] = [];
+    for (const r of e.players) {
+      if (r.id === selfId || r.folded) continue;
+      const manos = stats.manos[r.id] ?? 0;
+      if (manos >= 3) {
+        const v = stats.vPip[r.id] ?? 0;
+        ratios.push(Math.min(1, Math.max(0, v / manos)));
+      }
+    }
+    if (ratios.length === 0) return undefined;
+    const media = ratios.reduce((a, b) => a + b, 0) / ratios.length;
+    return Math.min(1, Math.max(0, media));
+  } catch {
+    return undefined;
+  }
+}
+
+/** Loose global (0-1) sobre todos los asientos con ≥3 manos; undefined sin datos. */
+function calcularLooseGlobal(e: EstadoSalas): number | undefined {
+  try {
+    const stats = e.opponentStats;
+    if (!stats) return undefined;
+    const ratios: number[] = [];
+    for (const id of Object.keys(stats.manos)) {
+      const seat = Number(id);
+      const manos = stats.manos[seat] ?? 0;
+      if (manos >= 3) {
+        const v = stats.vPip[seat] ?? 0;
+        ratios.push(Math.min(1, Math.max(0, v / manos)));
+      }
+    }
+    if (ratios.length === 0) return undefined;
+    const media = ratios.reduce((a, b) => a + b, 0) / ratios.length;
+    return Math.min(1, Math.max(0, media));
+  } catch {
+    return undefined;
+  }
 }
 
 function cartaCorta(c: Card): string {

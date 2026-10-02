@@ -57,7 +57,7 @@ describe("endurecido cerebro", () => {
   });
 
   it("clave con numRivales HU/multi y fallback 0.5 para claves viejas", () => {
-    // V2: con rivales la clave es rica calle/precio/stack/rivales; sin rivales sigue vieja por compat.
+    // V3: con rivales la clave es rica calle/precio/stack/rivales/fuerza; sin rivales sigue vieja por compat.
     const brain = createBrain();
     // Priors nuevos existen.
     expect(brain.priors["flop/hasPot/HU/call"]).toBe(0.5);
@@ -84,7 +84,7 @@ describe("endurecido cerebro", () => {
       toCall: 60,
       numRivales: 1,
     });
-    expect(hu).toBe("flop/cheap/deep/HU");
+    expect(hu).toBe("flop/cheap/deep/HU/mid");
 
     const multi = claveDesdeContexto({
       street: "flop",
@@ -94,7 +94,7 @@ describe("endurecido cerebro", () => {
       toCall: 0,
       numRivales: 3,
     });
-    expect(multi).toBe("flop/free/deep/multi");
+    expect(multi).toBe("flop/free/deep/multi/mid");
 
     // Registro viejo sin numRivales → clave vieja.
     const viejo = buildHandRecord({
@@ -105,7 +105,7 @@ describe("endurecido cerebro", () => {
     });
     expect(claveSituacion(viejo)).toBe("flop/hasPot");
 
-    // Registro nuevo con rivales → clave rica V2 (sin pot/stack → mid, call sin dato → pricey).
+    // Registro nuevo con rivales → clave rica V3 (sin pot/stack → mid, call sin dato → pricey, AKs liga pareja K → weak).
     const nuevo = buildHandRecord({
       won: true,
       myCards: "A♠ K♠",
@@ -113,7 +113,7 @@ describe("endurecido cerebro", () => {
       actions: [{ street: "flop", type: "call", amount: 60, toCall: 60 }],
       numRivales: 1,
     });
-    expect(claveSituacion(nuevo)).toBe("flop/pricey/mid/HU");
+    expect(claveSituacion(nuevo)).toBe("flop/pricey/mid/HU/weak");
 
     // El cerebro elige sin romper con claves nuevas (fallback 0.5).
     const legal = {

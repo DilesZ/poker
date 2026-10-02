@@ -1,12 +1,15 @@
 // Cerebro autónomo del agente: tabula rasa, aprende solo mano a mano.
 // NO importa ni usa lib/training/** (legado) ni getAiAction de lib/poker/ai.ts.
-// Toda la estrategia nace de dos sitios: priors por clave de situación y la reflexión
-// posterior a cada mano. Cero reglas fijas tipo "par > raise": ni handRankApprox
-// (ctx) ni las cartas deciden la acción, solo el aprendizaje acumulado.
 //
 // V2: estado rico 72 situaciones (calle/precio/stack/rivales), crédito total
 // a TODA la actionHistory con descuento 0.8^d y magnitud por bote, regret
 // contrafactual para tipos no usados, epsilon efectivo por visitas + bonus UCB.
+//
+// V3 CARD-AWARE: la clave suma bucket de fuerza
+// `calle/precio/stack/rivales/fuerza` (216 situaciones nuevas, bajo demanda);
+// la decisión suma un shape por cartas (raise/allin premian fuerza, fold
+// premia debilidad) + ajuste por mesa loose/tight. La fuerza NUNCA impone
+// reglas fijas: solo desplaza la puntuación y abre buckets para aprender.
 import { potOdds } from "../poker/game";
 import type { Street } from "../poker/types";
 import {
@@ -15,6 +18,7 @@ import {
   claveSituacion,
   parsearAccion,
 } from "./reflection";
+import { bucketFuerza, estimateCardStrength } from "./strength";
 
 export interface Lesson {
   id: string;
@@ -28,6 +32,8 @@ export interface Lesson {
   magnitude?: number;
   /** Nº de acciones acreditadas en la mano (crédito total). */
   actionsCredited?: number;
+  /** Bucket de fuerza V3 de la mano (weak|mid|strong). Solo informativo. */
+  strengthBucket?: string;
 }
 
 export interface Brain {
@@ -60,6 +66,11 @@ export interface BrainContext {
   handRankApprox?: number;
   /** Rivales en la mano (para distinguir HU vs multi). */
   numRivales?: number;
+  /** Fuerza de cartas 0-1 (la pasa roomEngine como {..., strength, rivalLoose}).
+   * Opcional: ausente → 0.5 (shape 0, no cambia la matemática vieja). */
+  strength?: number;
+  /** 0=tight … 1=loose (mesa). Opcional: ajusta call/raise/fold ±0.02-0.04. */
+  rivalLoose?: number;
 }
 
 export interface HandRecord {
@@ -134,7 +145,14 @@ export function createBrain(): Brain {
   };
 }
 
-/** Elige acción: epsilon-greedy sobre priors aprendidos de la clave de situación. */
+/** Elige acción: epsilon-greedy sobre priors + shape por cartas (V3).
+ * Shape: fold premia debilidad (0.5-strength)*0.35; call/check (strength-0.5)*0.25;
+ * raise/allin (strength-0.5)*0.45. Sin strength (0.5) el shape es 0: matemática
+ * vieja intacta. Ajuste rival: mesa loose (rivalLoose>0.45) call +0.03 y raise
+ * con strong +0.04 (la loose paga de más: se extrae valor); mesa nit
+ * (rivalLoose<0.2) fold con mid -0.02 (ante nits que casi nunca farolean, el
+ * fold marginal pierde atractivo: se respeta menos su agresión). Mantiene el
+ * veto pot-odds para call y el UCB/epsilon efectivo. */
 export function chooseBrainAction(brain: Brain, legal: BrainLegal, ctx: BrainContext): BrainAction {
   const candidatos = legal.candidates;
   if (candidatos.length === 0) {
@@ -151,12 +169,31 @@ export function chooseBrainAction(brain: Brain, legal: BrainLegal, ctx: BrainCon
   // Exploración: azar puro entre candidatos legales (el raise abre 0.5*pot).
   if (Math.random() < effEps) return conTamano(elegirAzar(candidatos), legal);
 
-  // Explotación: mejor prior + bonus UCB para desempatar a favor de lo menos visto.
+  // Explotación: mejor prior + shape por cartas + ajuste rival + bonus UCB.
   const bonus = 0.01 / (1 + visits);
+  const strength = ctx.strength ?? 0.5;
+  const bucket = bucketFuerza(strength);
+  const rl = ctx.rivalLoose;
   let mejor = candidatos[0] as BrainAction;
   let mejorPuntaje = Number.NEGATIVE_INFINITY;
   for (const accion of candidatos) {
-    const puntaje = priorEvaluado(brain, clave, accion, legal) + bonus;
+    const base = priorEvaluado(brain, clave, accion, legal);
+    let shape: number;
+    if (accion.type === "fold") shape = (0.5 - strength) * 0.35;
+    else if (accion.type === "call" || accion.type === "check")
+      shape = (strength - 0.5) * 0.25;
+    else shape = (strength - 0.5) * 0.45;
+    let rivalAdj = 0;
+    if (typeof rl === "number" && Number.isFinite(rl)) {
+      if (rl > 0.45) {
+        if (accion.type === "call") rivalAdj += 0.03;
+        // Solo raise (no allin): el allin ya lleva shape grande; no sobre-shovear.
+        if (accion.type === "raise" && bucket === "strong") rivalAdj += 0.04;
+      } else if (rl < 0.2) {
+        if (accion.type === "fold" && bucket === "mid") rivalAdj -= 0.02;
+      }
+    }
+    const puntaje = base + shape + rivalAdj + bonus;
     // Desempate aleatorio: sin datos, ninguna acción merece ventaja previa.
     if (puntaje > mejorPuntaje || (puntaje === mejorPuntaje && Math.random() < 0.5)) {
       mejor = accion;
@@ -244,6 +281,7 @@ export function reflectOnHand(
       handsPlayed,
       magnitude,
       actionsCredited: n,
+      strengthBucket: bucketDeRecord(record),
     });
     lessonsAcum.push(lesson);
   }
@@ -272,7 +310,9 @@ export function reflectOnHand(
   };
 }
 
-/** Prior con fallback V2: directa → quita stack (precio→cubo + rivales) → vieja → 0.5. */
+/** Prior con fallback V3: directa v3 → sin fuerza (calle/precio/stack/rivales)
+ * → calle/cubo/rivales (free→toCall0, cheap/pricey→hasPot) → calle/cubo → 0.5.
+ * Las claves V3 no se pre-generan (bajo demanda): si falta, cae al fallback. */
 export function priorConFallback(
   priors: Record<string, number>,
   clave: string,
@@ -281,6 +321,20 @@ export function priorConFallback(
   const directa = priors[`${clave}/${tipo}`];
   if (directa !== undefined) return directa;
   const partes = clave.split("/");
+  if (partes.length === 5) {
+    // V3: calle/precio/stack/rivales/fuerza → quita fuerza.
+    const [calle, precio, stack, rival] = partes as [string, string, string, string, string];
+    const sinFuerza = priors[`${calle}/${precio}/${stack}/${rival}/${tipo}`];
+    if (sinFuerza !== undefined) return sinFuerza;
+    const cubo = precio === "free" ? "toCall0" : "hasPot";
+    const cuboReal =
+      precio === "toCall0" || precio === "hasPot" ? precio : cubo;
+    const conRivales = priors[`${calle}/${cuboReal}/${rival}/${tipo}`];
+    if (conRivales !== undefined) return conRivales;
+    const vieja = priors[`${calle}/${cuboReal}/${tipo}`];
+    if (vieja !== undefined) return vieja;
+    return 0.5;
+  }
   if (partes.length === 4) {
     // Rica: calle/precio/stack/rivales → calle/cubo/rivales.
     const [calle, precio, , rival] = partes as [string, string, string, string];
@@ -367,6 +421,7 @@ interface LessonDatos {
   handsPlayed: number;
   magnitude?: number;
   actionsCredited?: number;
+  strengthBucket?: string;
 }
 
 function crearLesson(datos: LessonDatos): Lesson {
@@ -393,7 +448,19 @@ function crearLesson(datos: LessonDatos): Lesson {
     ...(typeof datos.actionsCredited === "number"
       ? { actionsCredited: datos.actionsCredited }
       : {}),
+    ...(typeof datos.strengthBucket === "string"
+      ? { strengthBucket: datos.strengthBucket }
+      : {}),
   };
+}
+
+/** Bucket global del record para la Lesson (informativo, try/catch → "mid"). */
+function bucketDeRecord(record: HandRecord): string {
+  try {
+    return bucketFuerza(estimateCardStrength(record.myCards, record.board));
+  } catch {
+    return "mid";
+  }
 }
 
 function contextoSituacion(record: HandRecord, tipo: BrainAction["type"]): string {

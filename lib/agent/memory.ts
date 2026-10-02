@@ -1,8 +1,9 @@
-// Memoria global del agente: persiste el cerebro entre salas (localStorage + caché).
-// SSR-safe: nunca toca window/localStorage sin try/catch y nunca lanza.
+// Memoria del agente en proceso: sin persistencia de navegador.
+// Solo proceso (holder en globalThis) + migrate + merge. Nunca lanza.
 import { createBrain, type Brain } from "./brain";
 
-export const GLOBAL_KEY = "poker-agent-global-v2";
+export { createBrain };
+export type { Brain };
 
 const MAX_PRIORS = 500;
 const MAX_LESSONS = 100;
@@ -10,11 +11,24 @@ const MAX_HANDS = 100000;
 const PRIOR_MIN = 0.05;
 const PRIOR_MAX = 0.95;
 
-let cache: Brain | null = null;
+const CACHE_KEY = "__poker_brain_cache_v3__";
+
+function holder(): { current: Brain | null } {
+  const g = globalThis as unknown as Record<string, unknown>;
+  const h = g[CACHE_KEY] as { current: Brain | null } | undefined;
+  if (h && typeof h === "object" && "current" in h) return h;
+  const nuevo: { current: Brain | null } = { current: null };
+  g[CACHE_KEY] = nuevo;
+  return nuevo;
+}
 
 /** Limpia la caché en memoria (solo tests). */
 export function __clearGlobalCache(): void {
-  cache = null;
+  try {
+    holder().current = null;
+  } catch {
+    // nunca lanza
+  }
 }
 
 /** Migra cualquier objeto con priors a un Brain completo (base createBrain). */
@@ -43,7 +57,6 @@ export function migrateBrain(raw: unknown): Brain {
       (l): l is Brain["lessons"][number] =>
         !!l && typeof l === "object" && typeof (l as { ts?: unknown }).ts !== "undefined",
     );
-    // Si el array trae objetos sin ts (legado), acéptalos igual si parecen lecciones.
     const legado = (r.lessons as unknown[]).filter(
       (l) => !!l && typeof l === "object",
     ) as Brain["lessons"];
@@ -77,29 +90,6 @@ export function migrateBrain(raw: unknown): Brain {
   };
 }
 
-function almacenamiento(): {
-  getItem(k: string): string | null;
-  setItem(k: string, v: string): void;
-} | null {
-  try {
-    const g = globalThis as unknown as Record<string, unknown>;
-    const ls = g["localStorage"];
-    if (ls && typeof (ls as { getItem?: unknown }).getItem === "function") {
-      return ls as { getItem(k: string): string | null; setItem(k: string, v: string): void };
-    }
-    if (typeof window !== "undefined") {
-      const w = window as unknown as Record<string, unknown>;
-      const wls = w["localStorage"];
-      if (wls && typeof (wls as { getItem?: unknown }).getItem === "function") {
-        return wls as { getItem(k: string): string | null; setItem(k: string, v: string): void };
-      }
-    }
-  } catch {
-    // sin almacenamiento
-  }
-  return null;
-}
-
 function clonar(b: Brain): Brain {
   return {
     handsPlayed: b.handsPlayed,
@@ -111,41 +101,23 @@ function clonar(b: Brain): Brain {
   };
 }
 
-/** Lee el cerebro global (localStorage + caché). Null si no hay nada guardado. */
+/** Lee el cerebro del proceso (caché en memoria). Null si no hay nada guardado. */
 export function loadGlobalBrain(): Brain | null {
   try {
-    if (cache) return clonar(cache);
-    const store = almacenamiento();
-    if (!store) return cache;
-    let raw: string | null = null;
-    try {
-      raw = store.getItem(GLOBAL_KEY);
-    } catch {
-      return cache;
-    }
-    if (!raw) return cache;
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      const migrado = migrateBrain(parsed);
-      cache = migrado;
-      return clonar(migrado);
-    } catch {
-      const def = createBrain();
-      cache = def;
-      return clonar(def);
-    }
+    const actual = holder().current;
+    if (!actual) return null;
+    return clonar(actual);
   } catch {
-    return cache;
+    return null;
   }
 }
 
-/** Guarda el cerebro global (best-effort). Capa lessons a 100 y priors a 500. */
+/** Guarda el cerebro en el proceso (best-effort). Capa lessons a 100 y priors a 500. */
 export function saveGlobalBrain(brain: Brain): void {
   try {
     const lessons = (brain.lessons ?? []).slice(-MAX_LESSONS);
     let entries = Object.entries(brain.priors ?? {});
     if (entries.length > MAX_PRIORS) {
-      // LRU simple: borra las más cercanas a 0.5 (menos aprendidas).
       entries.sort((a, b) => Math.abs(a[1] - 0.5) - Math.abs(b[1] - 0.5));
       entries = entries.slice(entries.length - MAX_PRIORS);
     }
@@ -158,14 +130,7 @@ export function saveGlobalBrain(brain: Brain): void {
       beliefs: [...(brain.beliefs ?? [])],
       counts: { ...(brain.counts ?? {}) },
     };
-    cache = payload;
-    const store = almacenamiento();
-    if (!store) return;
-    try {
-      store.setItem(GLOBAL_KEY, JSON.stringify(payload));
-    } catch {
-      // best-effort
-    }
+    holder().current = payload;
   } catch {
     // best-effort: nunca lanza
   }

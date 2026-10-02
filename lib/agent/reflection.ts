@@ -8,6 +8,7 @@
 // Por compat, cuando no hay dato de rivales se devuelve la clave vieja
 // `calle/cubo` (toCall0/hasPot), así los registros viejos siguen aprendiendo.
 import type { BrainAction, BrainContext, HandRecord } from "./brain";
+import { bucketFuerza, estimateCardStrength } from "./strength";
 
 /** Cubo de situación: "toCall0" (decisión sin precio) o "hasPot" (hay precio). */
 export type Cubo = "toCall0" | "hasPot";
@@ -24,11 +25,13 @@ const CALLES = ["preflop", "flop", "turn", "river"] as const;
 const RIVALES = ["HU", "multi"] as const;
 const PRECIOS: readonly Precio[] = ["free", "cheap", "pricey"];
 const STACKS: readonly StackBucket[] = ["short", "mid", "deep"];
+const FUERZAS = ["weak", "mid", "strong"] as const;
 
-/** Ruleta: 8 claves base (compat) + 16 con rivales (HU/multi) + 72 ricas V2.
- * Total distintas 96 (8+16+72). El enunciado pedía 104 (8+24+72) pero 24
- * cuenta doble las 8 viejas (8+16=24 viejas en total); el total distinto
- * correcto es 96. Se mantienen las 8 viejas y las 16 con rivales por compat. */
+/** Ruleta: 8 claves base (compat) + 16 con rivales (HU/multi) + 72 ricas V2
+ * + 216 ricas V3 (72 con sufijo /fuerza weak|mid|strong).
+ * Total distintas 312 (8+16+72+216). Se mantienen todas las anteriores por
+ * compat; el cerebro NO pre-genera las 216 V3 (bajo demanda con fallback 0.5).
+ * Debe seguir conteniendo "preflop/toCall0" y "flop/hasPot". */
 export const RULETA_SITUACIONES: readonly string[] = [
   ...CALLES.flatMap((calle) => CUBOS.map((cubo) => `${calle}/${cubo}`)),
   ...CALLES.flatMap((calle) =>
@@ -37,6 +40,13 @@ export const RULETA_SITUACIONES: readonly string[] = [
   ...CALLES.flatMap((calle) =>
     PRECIOS.flatMap((precio) =>
       STACKS.flatMap((stack) => RIVALES.map((r) => `${calle}/${precio}/${stack}/${r}`)),
+    ),
+  ),
+  ...CALLES.flatMap((calle) =>
+    PRECIOS.flatMap((precio) =>
+      STACKS.flatMap((stack) =>
+        RIVALES.flatMap((r) => FUERZAS.map((f) => `${calle}/${precio}/${stack}/${r}/${f}`)),
+      ),
     ),
   ),
 ];
@@ -146,7 +156,38 @@ export function precioDeAccionHistorica(
   return "free";
 }
 
-/** Clave rica por acción (para crédito total): calle/precio/stack/rivales.
+/** Board parcial para fuerza progresiva: preflop "" (solo hole), flop 3,
+ * turn 4, river 5+ (board completo). Tokens separados por espacios. */
+export function boardParcial(board: string, calleAccion: string): string {
+  if (!board || typeof board !== "string") return "";
+  const calle = normalizarCalle(calleAccion);
+  if (calle === "preflop") return "";
+  const tokens = board.trim().split(/\s+/).filter(Boolean);
+  if (calle === "flop") return tokens.slice(0, 3).join(" ");
+  if (calle === "turn") return tokens.slice(0, 4).join(" ");
+  return tokens.join(" ");
+}
+
+/** Bucket de fuerza global del record (try/catch → "mid"). */
+function fuerzaDeRecord(record: HandRecord): string {
+  try {
+    return bucketFuerza(estimateCardStrength(record.myCards, record.board));
+  } catch {
+    return "mid";
+  }
+}
+
+/** Bucket de fuerza progresiva: hole + board parcial según la calle. */
+function fuerzaProgresiva(record: HandRecord, calleAccion: string): string {
+  try {
+    const parcial = boardParcial(record.board ?? "", calleAccion);
+    return bucketFuerza(estimateCardStrength(record.myCards, parcial));
+  } catch {
+    return "mid";
+  }
+}
+
+/** Clave rica por acción (para crédito total): calle/precio/stack/rivales/fuerza (V3).
  * Si no hay numRivales, devuelve clave vieja calle/cubo por compat. */
 export function claveParaAccion(
   streetAccion: string,
@@ -160,12 +201,13 @@ export function claveParaAccion(
   const precio = precioDeAccionHistorica(actionText, record);
   const stack = stackDeRecord(record);
   const rival = record.numRivales <= 1 ? "HU" : "multi";
-  return `${calle}/${precio}/${stack}/${rival}`;
+  const fuerza = fuerzaProgresiva(record, calle);
+  return `${calle}/${precio}/${stack}/${rival}/${fuerza}`;
 }
 
 /** Clave de situación desde el registro: última decisión + su cubo de precio.
- * Sin numRivales → vieja `calle/cubo` (compat). Con rivales → rica V2
- * `calle/precio/stack/rivales`. */
+ * Sin numRivales → vieja `calle/cubo` (compat exacta). Con rivales → rica V3
+ * `calle/precio/stack/rivales/fuerza` (fuerza global del record). */
 export function claveSituacion(record: HandRecord): string {
   const historial = record.actionHistory.filter(
     (a) => a.street !== "showdown" && a.street !== "done",
@@ -179,13 +221,14 @@ export function claveSituacion(record: HandRecord): string {
   }
   const rival = record.numRivales <= 1 ? "HU" : "multi";
   const stack = stackDeRecord(record);
-  if (!ultima) return `${calle}/free/${stack}/${rival}`;
+  if (!ultima) return `${calle}/free/${stack}/${rival}/${fuerzaDeRecord(record)}`;
   const precio = precioDeAccionHistorica(ultima.action, record);
-  return `${calle}/${precio}/${stack}/${rival}`;
+  return `${calle}/${precio}/${stack}/${rival}/${fuerzaDeRecord(record)}`;
 }
 
 /** Clave de situación en caliente: mismo cubo, derivado del precio enfrentado.
- * Sin numRivales → vieja `calle/cubo` (compat). Con rivales → rica V2. */
+ * Sin numRivales → vieja `calle/cubo` (compat exacta). Con rivales → rica V3
+ * `calle/precio/stack/rivales/fuerza` con fuerza de ctx.strength (?? 0.5). */
 export function claveDesdeContexto(ctx: BrainContext): string {
   const calle = normalizarCalle(ctx.street);
   if (typeof ctx.numRivales !== "number") {
@@ -195,7 +238,8 @@ export function claveDesdeContexto(ctx: BrainContext): string {
   const precio = bucketPrecio(ctx.toCall, ctx.pot);
   const stack = bucketStack(ctx.myStack);
   const rival = ctx.numRivales <= 1 ? "HU" : "multi";
-  return `${calle}/${precio}/${stack}/${rival}`;
+  const fuerza = bucketFuerza(ctx.strength ?? 0.5);
+  return `${calle}/${precio}/${stack}/${rival}/${fuerza}`;
 }
 
 /** Parsea una acción registrada ("raise 120 (precio 40)") a tipo e importe. */

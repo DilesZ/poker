@@ -1,4 +1,6 @@
 // Tests de dream consolidation (3): mueve más con 200, clip, determinista.
+// EV-ponderado: flip won?0.08:0.20, jitter ±25%, alto EV (|delta|>100) duplica.
+// V3: claves ricas con fuerza (weak/mid/strong) bajo demanda → distancia por unión.
 import { describe, expect, it } from "vitest";
 import { createBrain } from "./brain";
 import { buildHandRecord } from "./reflection";
@@ -18,8 +20,11 @@ function registroGanado() {
 }
 
 function distancia(a: Record<string, number>, b: Record<string, number>): number {
+  // Unión de claves: V3 crea claves nuevas bajo demanda (calle/precio/stack/
+  // rival/fuerza/acción) que no están en base.priors; hay que contarlas.
+  const claves = new Set([...Object.keys(a), ...Object.keys(b)]);
   let s = 0;
-  for (const k of Object.keys(a)) s += Math.abs((a[k] ?? 0.5) - (b[k] ?? 0.5));
+  for (const k of claves) s += Math.abs((a[k] ?? 0.5) - (b[k] ?? 0.5));
   return s;
 }
 

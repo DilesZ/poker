@@ -1,7 +1,8 @@
 // Lógica compartida de /api/rooms/*: la usan las rutas [code] y sus alias
 // (state, action, leave). Valida en el interior del mutador y mapea errores
 // 404 (sala/estancia), 409 (turno o conflicto de versión) y 400 (datos).
-import { createBrain } from "../agent/brain";
+import { createBrain, type Brain } from "../agent/brain";
+import { loadGlobalBrainServer, mergeAndSaveServer } from "../agent/globalStore";
 import type { AccionSala } from "./roomEngine";
 import {
   calcularActingSeat,
@@ -34,6 +35,35 @@ const TIPOS_ACCION = new Set([
   "nextStreet",
 ]);
 const SIN_CACHE = { "cache-control": "no-store" };
+
+/** Cerebro inicial: global del servidor si tiene manos, si no base. Nunca lanza. */
+async function hidratarCerebro(): Promise<{ brain: Brain; agentMemoryVersion?: number }> {
+  try {
+    const g = await loadGlobalBrainServer();
+    if (g && (g.handsPlayed ?? 0) > 0) return { brain: g, agentMemoryVersion: 3 };
+  } catch {
+    // best-effort
+  }
+  return { brain: createBrain() };
+}
+
+/**
+ * Sincroniza la sala con el cerebro global sin bloquear.
+ * Solo fuera de mutadores CAS: fusiona, actualiza room.brain y persiste.
+ */
+function syncGlobal(room: Room): void {
+  try {
+    const snapshot = room.brain;
+    void mergeAndSaveServer(snapshot)
+      .then((m) => {
+        room.brain = m;
+        void guardarSala(room).catch(() => {});
+      })
+      .catch(() => {});
+  } catch {
+    // best-effort
+  }
+}
 
 /** Cuerpo JSON de la petición; null si falta o no es un objeto. */
 export async function leerCuerpo(req: Request): Promise<Record<string, unknown> | null> {
@@ -68,6 +98,7 @@ export async function crearSala(cuerpo: Record<string, unknown> | null): Promise
 
   const code = await codigoLibre();
   const ahora = Date.now();
+  const inicial = await hidratarCerebro();
   const room: Room = {
     code,
     createdAt: ahora,
@@ -86,7 +117,10 @@ export async function crearSala(cuerpo: Record<string, unknown> | null): Promise
     state: initRoomState(maxJugadores, true),
     version: 1,
     updatedAt: ahora,
-    brain: createBrain(),
+    brain: inicial.brain,
+    ...(inicial.agentMemoryVersion !== undefined
+      ? { agentMemoryVersion: inicial.agentMemoryVersion }
+      : {}),
   };
   await guardarSala(room);
   return Response.json({ code }, { headers: SIN_CACHE });
@@ -150,6 +184,7 @@ export async function unirseSala(cuerpo: Record<string, unknown> | null): Promis
 
   if (r.estado === "sin-sala") return error(404, "Sala no encontrada.");
   if (r.estado === "rechazado") return error(errorInterno.codigo, errorInterno.mensaje);
+  if (r.estado === "ok") syncGlobal(r.room);
   return Response.json(
     { clientId: sentado.clientId, name: nombre, seat: sentado.seat },
     { headers: SIN_CACHE },
@@ -185,7 +220,10 @@ export async function respuestaEstado(code: string | null, url: URL): Promise<Re
       reflejar(sala);
       return sala;
     });
-    if (jugada.estado === "ok") room = jugada.room;
+    if (jugada.estado === "ok") {
+      room = jugada.room;
+      syncGlobal(room);
+    }
   }
 
   if (Number.isFinite(versionPedida) && room.version === versionPedida) {
@@ -248,6 +286,7 @@ export async function respuestaAccion(
   if (r.estado === "sin-sala") return error(404, "Sala no encontrada.");
   if (r.estado === "conflicto") return error(409, "La sala cambió; vuelve a intentarlo.");
   if (r.estado === "rechazado") return error(fallo.codigo, fallo.mensaje);
+  syncGlobal(r.room);
   return Response.json(construirVista(r.room, clientId), { headers: SIN_CACHE });
 }
 
@@ -293,6 +332,7 @@ export async function respuestaSalir(
   if (r.estado === "sin-sala") return error(404, "Sala no encontrada.");
   if (r.estado === "conflicto") return error(409, "La sala cambió; vuelve a intentarlo.");
   if (r.estado === "rechazado") return error(fallo.codigo, fallo.mensaje);
+  syncGlobal(r.room);
   return Response.json({ ok: true }, { headers: SIN_CACHE });
 }
 

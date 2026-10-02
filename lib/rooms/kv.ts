@@ -55,13 +55,20 @@ async function pedirLectura(ruta: string): Promise<Response | null> {
   return null;
 }
 
-export async function kvLeer(code: string): Promise<Room | null> {
-  const res = await pedirLectura(`/get/${PREFIJO}${encodeURIComponent(code)}`);
+export async function kvLeerJSON<T>(key: string): Promise<T | null> {
+  const res = await pedirLectura(`/get/${encodeURIComponent(key)}`);
   if (!res || !res.ok) return null;
-  let texto: string;
+  let texto = "";
   try {
     const cuerpo = (await res.json()) as { result?: unknown };
-    texto = typeof cuerpo.result === "string" ? cuerpo.result : "";
+    if (typeof cuerpo.result === "string") {
+      texto = cuerpo.result;
+    } else if (cuerpo.result === null || cuerpo.result === undefined) {
+      return null;
+    } else {
+      // Upstash a veces devuelve el objeto ya parseado.
+      return cuerpo.result as T;
+    }
   } catch {
     return null;
   }
@@ -73,7 +80,7 @@ export async function kvLeer(code: string): Promise<Room | null> {
     return null;
   }
   if (Array.isArray(valor)) {
-    // escritura legada (el array de args se guardó como valor)
+    // Escritura legada (el array de args se guardó como valor).
     const primero = valor[0];
     if (typeof primero !== "string") return null;
     try {
@@ -82,20 +89,31 @@ export async function kvLeer(code: string): Promise<Room | null> {
       return null;
     }
   }
+  if (valor === null || valor === undefined) return null;
+  return valor as T;
+}
+
+export async function kvEscribirJSON(key: string, value: unknown, ttlSeg?: number): Promise<boolean> {
+  const args: unknown[] =
+    typeof ttlSeg === "number" && Number.isFinite(ttlSeg) && ttlSeg > 0
+      ? ["SET", key, JSON.stringify(value), "EX", Math.floor(ttlSeg)]
+      : ["SET", key, JSON.stringify(value)];
+  const cuerpo = JSON.stringify(args);
+  try {
+    const res = await pedir("/", cuerpo);
+    return res !== null && res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function kvLeer(code: string): Promise<Room | null> {
+  const valor = await kvLeerJSON<unknown>(`${PREFIJO}${code}`);
   if (!valor || typeof valor !== "object") return null;
   const room = valor as Room;
   return typeof room.code === "string" ? room : null;
 }
 
 export async function kvEscribir(room: Room): Promise<boolean> {
-  // Upstash REST: POST / con array de comando completo (SET key value EX ttl)
-  const cuerpo = JSON.stringify([
-    "SET",
-    `${PREFIJO}${room.code}`,
-    JSON.stringify(room),
-    "EX",
-    TTL_SEGUNDOS,
-  ]);
-  const res = await pedir("/", cuerpo);
-  return res !== null && res.ok;
+  return kvEscribirJSON(`${PREFIJO}${room.code}`, room, TTL_SEGUNDOS);
 }

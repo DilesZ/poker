@@ -1,4 +1,5 @@
 import Link from "next/link";
+import GlobalBrainPanel from "@/components/agent/GlobalBrainPanel";
 import SelfPlayPanel from "@/components/training/SelfPlayPanel";
 import TournamentBar from "@/components/tournament/TournamentBar";
 
@@ -20,6 +21,7 @@ export default function EntrenarPage() {
       </header>
       <div className="poker-grid">
         <main className="poker-sidebar">
+          <GlobalBrainPanel />
           <SelfPlayPanel />
           <TournamentBar />
         </main>
@@ -42,6 +44,12 @@ export default function EntrenarPage() {
                   balanceados, sin sizes mixtos, sin adaptación al rival y
                   sin memoria entre manos (una decisión simplificada por
                   calle).
+                </li>
+                <li>
+                  <strong>Servidor:</strong> el cerebro global vive en KV
+                  (clave <code>agent:global:brain:v3</code>, TTL 30 días) y
+                  se comparte entre PCs; cada sala hidrata desde él y
+                  fusiona al cerrar manos (best-effort, sin bloquear).
                 </li>
               </ul>
             </div>

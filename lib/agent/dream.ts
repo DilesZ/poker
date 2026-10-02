@@ -20,8 +20,11 @@ export function mulberry32(seed: number): () => number {
 }
 
 function variarRegistro(rec: HandRecord, rng: () => number): HandRecord {
-  const won = rng() < 0.15 ? !rec.won : rec.won;
-  const jitter = 1 + (rng() * 0.4 - 0.2);
+  // Las derrotas se re-imaginan más como victorias (0.20) que al revés (0.08):
+  // así el sueño busca líneas alternativas donde el EV perdido se recupera.
+  const flipProb = rec.won ? 0.08 : 0.2;
+  const won = rng() < flipProb ? !rec.won : rec.won;
+  const jitter = 1 + (rng() * 0.5 - 0.25);
   const stackDelta =
     typeof rec.stackDelta === "number" ? Math.round(rec.stackDelta * jitter) : rec.stackDelta;
   let numRivales = rec.numRivales;
@@ -112,6 +115,17 @@ export function counterfactualDream(
 }
 
 /**
+ * Peso EV de una variación: |stackDelta|/100 clip 0.3-2.
+ * Las variaciones de alto EV (|delta|>100) se repiten 2x en el bucle
+ * para que el sueño consolide más las líneas que más fichas mueven.
+ */
+export function evWeight(stackDelta: unknown): number {
+  const ad =
+    typeof stackDelta === "number" && Number.isFinite(stackDelta) ? Math.abs(stackDelta) : 0;
+  return Math.min(2, Math.max(0.3, ad / 100));
+}
+
+/**
  * Consolida el cerebro repitiendo reflectOnHand sobre variaciones del último
  * registro. Solo consolida priors (handsPlayed/lessons/epsilon/counts se
  * conservan del original) para no inflar la experiencia soñada.
@@ -131,6 +145,12 @@ export function dreamConsolidate(
     const tmp: Brain = { ...brain, priors };
     const res = reflectOnHand(tmp, variado);
     priors = res.brain.priors;
+    // Alto EV → duplica el registro variado en el bucle.
+    if (evWeight(variado.stackDelta) > 1) {
+      const tmp2: Brain = { ...brain, priors };
+      const res2 = reflectOnHand(tmp2, variado);
+      priors = res2.brain.priors;
+    }
   }
   const finalPriors = { ...priors };
   counterfactualDream(finalPriors, brain, lastRecord);
