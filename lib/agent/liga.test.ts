@@ -55,4 +55,41 @@ describe("agent/liga", () => {
     expect(sin.stats.reflects).toBe(600);
     expect(sin.brain.handsPlayed).toBe(100);
   });
+
+  it("7. exploiter: asiento heurístico que no aprende (5 reflects/mano)", () => {
+    const a = jugarLiga(createBrain(), { hands: 100, seed: 7, dreamCada: 0, exploiterSeat: 5 });
+    // 100×5 + 32 replay = 532; la mano sigue contando 1.
+    expect(a.stats.reflects).toBe(532);
+    expect(a.brain.handsPlayed).toBe(100);
+    expect(a.stats.asientosVivos).toBe(5);
+    const b = jugarLiga(createBrain(), { hands: 100, seed: 7, dreamCada: 0, exploiterSeat: 5 });
+    expect(a.brain.priors).toEqual(b.brain.priors);
+    expect(Math.abs(a.stats.sumaBB)).toBeLessThan(50);
+  });
+
+  it("8. snapshot trailing: asientos 1 y 3 congelados (4 y 3 reflects/mano)", () => {
+    const snap = jugarLiga(createBrain(), { hands: 100, seed: 7, dreamCada: 0, snapshotCada: 50 });
+    // 100×4 + 32 replay = 432.
+    expect(snap.stats.reflects).toBe(432);
+    expect(snap.brain.handsPlayed).toBe(100);
+    expect(snap.stats.asientosVivos).toBe(4);
+    const ambos = jugarLiga(createBrain(), {
+      hands: 100,
+      seed: 7,
+      dreamCada: 0,
+      exploiterSeat: 5,
+      snapshotCada: 50,
+    });
+    // Vivos 0,2,4 → 100×3 + 32 = 332.
+    expect(ambos.stats.reflects).toBe(332);
+    expect(ambos.stats.asientosVivos).toBe(3);
+    const bis = jugarLiga(createBrain(), {
+      hands: 100,
+      seed: 7,
+      dreamCada: 0,
+      exploiterSeat: 5,
+      snapshotCada: 50,
+    });
+    expect(ambos.brain.priors).toEqual(bis.brain.priors);
+  });
 });

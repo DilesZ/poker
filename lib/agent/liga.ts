@@ -7,7 +7,8 @@
 // - Local: npm run liga (entrena y sube el cerebro a prod).
 import { advanceStreet, deal, newHand, postBlinds, refreshPot, showdown } from "../poker/game";
 import type { Card } from "../poker/types";
-import { estimateStrength, mulberry32, positionOfSeat } from "../training/selfplay";
+import { estimateStrength, mulberry32, positionOfSeat, decideFor } from "../training/selfplay";
+import { cloneStrategy, DEFAULT_STRATEGY } from "../training/strategy";
 import { buildHandRecord, type AccionMano } from "./reflection";
 import {
   chooseBrainAction,
@@ -26,6 +27,14 @@ export interface LigaOpts {
   /** Replay priorizado por |ventaja| (default true). Re-juega las manos que
    * más enseñan en vez de solo la última: +8 reflects/25 manos (~+5% CPU). */
   replay?: boolean;
+  /** Asiento exploiter con heurística fija (default null = apagado). Rompe el
+   * espejo: 6 cerebros idénticos co-adaptan y coluden; un rival fijo distinto
+   * enseña a explotarlo. No se refleja (no contamina al cerebro). */
+  exploiterSeat?: number | null;
+  /** Snapshot trailing cada N manos (default 0 = apagado). Los asientos 1 y 3
+   * juegan con un clon congelado (fictitious play de ventana corta): el cerebro
+   * aprende contra su propio pasado reciente en vez de contra su presente. */
+  snapshotCada?: number;
 }
 
 export interface LigaStats {
@@ -35,6 +44,8 @@ export interface LigaStats {
   showdownPct: number;
   reflects: number;
   priorsMovidos: number;
+  /** Asientos que aprenden por mano (6 base; menos con exploiter/snapshot). */
+  asientosVivos?: number;
 }
 
 export interface LigaResult {
@@ -148,6 +159,20 @@ export function jugarLiga(base: Brain, opts: LigaOpts = {}): LigaResult {
   const SB = 10;
   const BB = 20;
   const STREETS = ["preflop", "flop", "turn", "river"] as const;
+  const exp = opts.exploiterSeat;
+  const exploiterSeat =
+    typeof exp === "number" && Number.isInteger(exp) && exp >= 0 && exp < NUM ? exp : null;
+  const snapshotCada =
+    typeof opts.snapshotCada === "number" && Number.isFinite(opts.snapshotCada) && opts.snapshotCada > 0
+      ? Math.floor(opts.snapshotCada)
+      : 0;
+  // Asientos congelados al snapshot (fictitious play): fijos para que las
+  // claves sean comparables entre ventanas.
+  const SNAP_SEATS = [1, 3];
+  const vivosFinal =
+    NUM -
+    (exploiterSeat === null ? 0 : 1) -
+    (snapshotCada > 0 ? SNAP_SEATS.filter((s) => s !== exploiterSeat).length : 0);
 
   if (!Number.isInteger(nHands) || nHands <= 0) {
     const clon = clonarBrain(base);
@@ -165,6 +190,9 @@ export function jugarLiga(base: Brain, opts: LigaOpts = {}): LigaResult {
   let sumaBB = 0;
   let showdownCount = 0;
   let reflects = 0;
+  // Rival fijo del exploiter + snapshot trailing (fictitious play ventana corta).
+  const heuristica = cloneStrategy(DEFAULT_STRATEGY);
+  let snap: Brain | null = null;
   // Buffer de replay: últimas 300 reflexiones con su |ventaja| para
   // re-entrenar las que más enseñan (consejo unánime del council).
   const quiReplay = opts.replay ?? true;
@@ -172,6 +200,8 @@ export function jugarLiga(base: Brain, opts: LigaOpts = {}): LigaResult {
   try {
     for (let h = 0; h < nHands; h++) {
       const button = h % NUM;
+      if (snapshotCada > 0 && h % snapshotCada === 0) snap = clonarBrain(actual);
+      const snapActivo = snapshotCada > 0 && snap !== null;
       const state = newHand(NUM, STACK, SB, BB, button);
       // Baseline PRE-ciegas (1000 por asiento): los deltas incluyen el coste de
       // las ciegas y la suma por mano es cero-sum. Si se capturase post-ciegas,
@@ -208,6 +238,21 @@ export function jugarLiga(base: Brain, opts: LigaOpts = {}): LigaResult {
             const toCall = Math.max(0, state.currentBet - (invested[p.id] ?? 0));
             const strength = estimateStrength(p.hole, state.board);
             const inv = invested[p.id] ?? 0;
+            const esExploiter = p.id === exploiterSeat;
+            const congelado = !esExploiter && snapActivo && SNAP_SEATS.includes(p.id);
+            const cerebro = congelado && snap ? snap : actual;
+            if (esExploiter) {
+              // Rival fijo heurístico: se juega pero no aprende ni enseña.
+              const pos = positionOfSeat(p.id, button, NUM);
+              const ha = decideFor(p.id, strength, toCall, state.pot, p.stack, BB, pos, heuristica);
+              const tipoH: TipoMano =
+                ha.action === "bet" ? "raise" : ha.action === "all-in" ? "allin" : ha.action;
+              const sizeH = ha.action === "bet" ? toCall + (ha.amount ?? 0) : undefined;
+              const nivelAntesH = state.currentBet;
+              aplicarDecision(e, () => refreshPot(state), p.id, tipoH, sizeH, toCall, invested);
+              if (p.bet > nivelAntesH) raisedThisPass = true;
+              continue;
+            }
             const candidates: BrainLegal["candidates"] = [];
             if (toCall > 0) candidates.push({ type: "fold" });
             else candidates.push({ type: "check" });
@@ -226,7 +271,7 @@ export function jugarLiga(base: Brain, opts: LigaOpts = {}): LigaResult {
               numRivales: rivales,
               strength,
             } as BrainContext;
-            const ba = chooseBrainAction(actual, legal, ctx);
+            const ba = chooseBrainAction(cerebro, legal, ctx);
             const nivelAntes = state.currentBet;
             const reg = aplicarDecision(
               e,
@@ -284,15 +329,28 @@ export function jugarLiga(base: Brain, opts: LigaOpts = {}): LigaResult {
       }
       if (reachedShowdown) showdownCount++;
 
-      // Reflexión on-policy: cada asiento aprende de su propio delta.
-      const boardTxt = state.board.map(cartaCorta).join(" ");
+      // Reflexión on-policy: cada asiento VIVO aprende de su propio delta.
+      // Ni el exploiter (heurística fija) ni los congelados (snapshot) aprenden.
+      const vivos: number[] = [];
       for (let s = 0; s < NUM; s++) {
+        if (s === exploiterSeat) continue;
+        if (snapActivo && SNAP_SEATS.includes(s)) continue;
+        vivos.push(s);
+      }
+      const ultimoVivo = vivos[vivos.length - 1] ?? -1;
+      // Cero-sum sobre TODOS los asientos (incluye exploiter/congelados).
+      for (let s = 0; s < NUM; s++) {
+        const pl = state.players[s];
+        if (!pl) continue;
+        sumaBB += (pl.stack - (stackInicio[s] ?? STACK)) / BB;
+      }
+      const boardTxt = state.board.map(cartaCorta).join(" ");
+      for (const s of vivos) {
         const pl = state.players[s];
         const tr = trazas[s];
         if (!pl || !tr) continue;
         const delta = pl.stack - (stackInicio[s] ?? STACK);
-        sumaBB += delta / BB;
-        const ultimo = s === NUM - 1;
+        const ultimo = s === ultimoVivo;
         const rec = buildHandRecord({
           won: delta > 0,
           myCards: pl.hole.map(cartaCorta).join(" "),
@@ -367,6 +425,7 @@ export function jugarLiga(base: Brain, opts: LigaOpts = {}): LigaResult {
       showdownPct: nHands > 0 ? showdownCount / nHands : 0,
       reflects,
       priorsMovidos: contarMovidos(actual.priors),
+      asientosVivos: vivosFinal,
     },
   };
 }

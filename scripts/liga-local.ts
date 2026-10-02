@@ -43,7 +43,13 @@ async function main(): Promise<void> {
   console.log(`base: manos=${base.handsPlayed} ε=${base.epsilon} priors=${Object.keys(base.priors ?? {}).length}`);
   for (let i = 0; i < ITERACIONES; i++) {
     const t0 = Date.now();
-    const r = jugarLiga(base, { hands: MANOS, seed: (Date.now() ^ (i * 7919)) >>> 0 });
+    // Anti-espejo como en servidor: exploiter + snapshots.
+    const r = jugarLiga(base, {
+      hands: MANOS,
+      seed: (Date.now() ^ (i * 7919)) >>> 0,
+      exploiterSeat: 5,
+      snapshotCada: 100,
+    });
     base = r.brain;
     const estado = await subir(base);
     console.log(

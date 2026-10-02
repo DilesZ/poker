@@ -28,7 +28,8 @@ async function jugarYGuardar(hands: number, seed: number | undefined) {
   const base = (await loadGlobalBrainServer()) ?? createBrain();
   const baseHands = base.handsPlayed ?? 0;
   const f = fn as (...args: unknown[]) => unknown;
-  const res = (await f(base, { hands, seed })) as {
+  // Mesa con anti-espejo: asiento 5 exploiter heurístico + snapshots cada 100.
+  const res = (await f(base, { hands, seed, exploiterSeat: 5, snapshotCada: 100 })) as {
     brain: Parameters<typeof mergeAndSaveServer>[0];
     stats: { hands: number; sumaBB: number; showdownPct: number; reflects: number; priorsMovidos: number };
   };
