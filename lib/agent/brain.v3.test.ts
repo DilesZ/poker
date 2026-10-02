@@ -1,5 +1,9 @@
 // Tests CEREBRO V3 CARD-AWARE: estimador de fuerza + shape + claves con /fuerza.
-// 5 de estimador + 7 de comportamiento (12 en total).
+// 5 de estimador + 7 de comportamiento (12) + 4 fugas EV (16 en total).
+// Fugas tapadas: draws valen max(made,drawEquity), made calibrada por categoría
+// (pareja 0.45-0.53 mid: la TP compite en vez de auto-foldear) y preflop loose vetado.
+// Nota draws: puro 9 outs→0.36 flop (antes 0.12, x3; aún weak<0.4), combo
+// 13-17 outs→0.52-0.68 mid/strong (sí paga).
 import { describe, expect, it, afterEach } from "vitest";
 import {
   chooseBrainAction,
@@ -8,6 +12,7 @@ import {
   reflectOnHand,
 } from "./brain";
 import { bucketFuerza, estimateCardStrength } from "./strength";
+import { dreamConsolidate, mulberry32 } from "./dream";
 import {
   boardParcial,
   buildHandRecord,
@@ -65,18 +70,19 @@ describe("brain V3: estimador de fuerza (5)", () => {
     expect(bucketFuerza(estimateCardStrength("zz", "qq"))).toBe("mid");
   });
 
-  it("E4. postflop evaluate7: SF>flush>pair (0.12+(cat/8)*0.78)", () => {
-    // Pareja K (cat1) → 0.2175 weak.
+  it("E4. postflop evaluate7 calibrado: SF>flush>pair (tabla por categoría)", () => {
+    // Pareja K con kicker A (cat1) → 0.45+0.073 = 0.523 mid (antes 0.2175 weak:
+    // la TP ni competía y el cerebro la foldeaba siempre).
     const pair = estimateCardStrength("A♠ K♠", "K♦ 7♣ 2♠");
-    expect(pair).toBeCloseTo(0.12 + (1 / 8) * 0.78, 6);
-    expect(bucketFuerza(pair)).toBe("weak");
-    // Color (cat5) → 0.6075 mid.
+    expect(pair).toBeCloseTo(0.5233, 3);
+    expect(bucketFuerza(pair)).toBe("mid");
+    // Color al As (cat5) → 0.81+0.08 = 0.89 strong.
     const flush = estimateCardStrength("A♠ K♠", "Q♠ 7♠ 2♠");
-    expect(flush).toBeCloseTo(0.12 + (5 / 8) * 0.78, 6);
-    expect(bucketFuerza(flush)).toBe("mid");
-    // Escalera de color (cat8) → 0.9 strong.
+    expect(flush).toBeCloseTo(0.89, 2);
+    expect(bucketFuerza(flush)).toBe("strong");
+    // Escalera de color (cat8) → 0.98 strong.
     const sf = estimateCardStrength("9♠ T♠", "J♠ Q♠ K♠");
-    expect(sf).toBeCloseTo(0.9, 6);
+    expect(sf).toBeCloseTo(0.98, 6);
     expect(bucketFuerza(sf)).toBe("strong");
     expect(sf).toBeGreaterThan(flush);
     expect(flush).toBeGreaterThan(pair);
@@ -361,5 +367,150 @@ describe("brain V3: card-aware (7)", () => {
       }),
     );
     expect(lesson?.strengthBucket).toBe("strong");
+  });
+});
+
+describe("brain V3: fugas EV tapadas (4)", () => {
+  it("V1. veto preflop 72o vs raise BB → fold aunque el prior sesgue a call", () => {
+    fijarRandom(0.99); // explotación + desempate estable
+    // 72o ≈0.3664 weak (<0.42): basura preflop.
+    const debilidad = estimateCardStrength("7♣ 2♦", "");
+    expect(debilidad).toBeLessThan(0.42);
+    expect(debilidad).toBeCloseTo(0.3664, 3);
+    const brain = { ...createBrain(), epsilon: 0 };
+    const legal = {
+      candidates: [
+        { type: "fold" as const },
+        { type: "call" as const },
+        { type: "raise" as const },
+      ],
+      toCall: 40, // >1bb (bb default 20) → hay veto
+      pot: 80,
+      stack: 1000,
+      bb: 20,
+    };
+    const ctx = {
+      street: "preflop" as const,
+      boardLen: 0,
+      myStack: 1000,
+      pot: 80,
+      toCall: 40,
+      numRivales: 1,
+      strength: debilidad,
+    };
+    // Sin veto el call ganaría: sesga priors a call 0.9 vs fold 0.1.
+    const clave = claveDesdeContexto(ctx);
+    brain.priors[`${clave}/call`] = 0.9;
+    brain.priors[`${clave}/fold`] = 0.1;
+    const accion = chooseBrainAction(brain, legal, ctx);
+    // Veto elimina call/raise → solo fold (devuelto con tamaño si único).
+    expect(accion.type).toBe("fold");
+  });
+
+  it("V2. suited connectors BTN gratis → no fold (sin veto con toCall 0)", () => {
+    fijarRandom(0.99);
+    // 76s ≈0.549 mid: suited+conectado vale para ver flop gratis.
+    const fuerza = estimateCardStrength("7♥ 6♥", "");
+    expect(fuerza).toBeGreaterThan(0.5);
+    expect(bucketFuerza(fuerza)).toBe("mid");
+    const brain = { ...createBrain(), epsilon: 0 };
+    const legal = {
+      candidates: [{ type: "fold" as const }, { type: "check" as const }],
+      toCall: 0, // gratis → nunca veta aunque fuera basura
+      pot: 30,
+      stack: 1000,
+      bb: 20,
+    };
+    const accion = chooseBrainAction(brain, legal, {
+      street: "preflop" as const,
+      boardLen: 0,
+      myStack: 1000,
+      pot: 30,
+      toCall: 0,
+      numRivales: 1,
+      strength: fuerza,
+    });
+    // fold shape preflop (0.45-0.549)*0.6≈-0.059 vs check +0.012 → check.
+    expect(accion.type).not.toBe("fold");
+    expect(accion.type).toBe("check");
+  });
+
+  it("V3. draws valen, la TP compite y el combo paga flop barato", () => {
+    fijarRandom(0.99);
+    // TP K con kicker A (cat1): 0.45+0.073=0.523 mid (tabla calibrada).
+    // Antes 0.2175 weak: la TP ni competía contra el fold.
+    const tp = estimateCardStrength("A♠ K♠", "K♦ 7♣ 2♠");
+    expect(tp).toBeCloseTo(0.5233, 3);
+    expect(bucketFuerza(tp)).toBe("mid");
+    // Flush-draw puro (9 outs→0.36 flop): antes 0.12, ahora 0.36 (x3).
+    // Aún weak (<0.4): el ejemplo 7♥6♥/A♥K♥2♣ no llega a mid con max();
+    // el combo sí (documenta la discrepancia con el ≥0.4 aspirado).
+    const puro = estimateCardStrength("7♥ 6♥", "A♥ K♥ 2♣");
+    expect(puro).toBeCloseTo(0.36, 6);
+    expect(puro).toBeGreaterThan(0.12);
+    // Combo flush+OESD (17 outs→0.68): mid/strong, sí paga barato.
+    const combo = estimateCardStrength("Q♥ J♥", "T♥ 9♥ 2♣");
+    expect(combo).toBeCloseTo(0.68, 6);
+    expect(combo).toBeGreaterThanOrEqual(0.4);
+    expect(bucketFuerza(combo)).not.toBe("weak");
+    // OESD puro (8 outs→0.32): también rescatado de 0.12.
+    const oesd = estimateCardStrength("J♠ T♦", "K♣ Q♥ 2♦");
+    expect(oesd).toBeCloseTo(0.32, 6);
+    // Decisión: combo barato elige call, no fold (shape +0.045 vs -0.063).
+    const brain = { ...createBrain(), epsilon: 0 };
+    const legal = {
+      candidates: [{ type: "fold" as const }, { type: "call" as const }],
+      toCall: 30, // cheap: 30/(200+30)≈0.13 <0.3, prior 0.5 cubre precio
+      pot: 200,
+      stack: 900,
+    };
+    const base = {
+      street: "flop" as const,
+      boardLen: 3,
+      myStack: 900,
+      pot: 200,
+      toCall: 30,
+      numRivales: 1,
+    };
+    const conCombo = chooseBrainAction(brain, legal, { ...base, strength: combo });
+    expect(conCombo.type).toBe("call");
+    // TP (0.523) también compite: call +0.006 vs fold -0.008 → call.
+    const conTP = chooseBrainAction(brain, legal, { ...base, strength: tp });
+    expect(conTP.type).toBe("call");
+  });
+
+  it("V4. flip simétrico: mulberry32 determinista y dream perdedor no inventa lección", () => {
+    // mulberry32: misma seed → misma secuencia; distinta seed → difiere.
+    const r1 = mulberry32(123);
+    const r2 = mulberry32(123);
+    expect(r1()).toBe(r2());
+    expect(r1()).toBe(r2());
+    expect(r1()).toBe(r2());
+    const ra = mulberry32(1)();
+    const rb = mulberry32(2)();
+    expect(ra).not.toBe(rb);
+    // Dream con record perdedor: no inventa victoria en lessons ni infla manos.
+    const base = createBrain();
+    const perdedor = buildHandRecord({
+      won: false,
+      myCards: "7♦ 2♣",
+      board: "A♠ K♥ Q♦",
+      showdown: false,
+      actions: [{ street: "preflop", type: "fold" }],
+      potWon: 0,
+      stackDelta: -20,
+      numRivales: 1,
+    });
+    const sonado = dreamConsolidate(base, perdedor, 50, 99);
+    expect(sonado.handsPlayed).toBe(base.handsPlayed);
+    expect(sonado.lessons).toEqual(base.lessons);
+    expect(sonado.epsilon).toBe(base.epsilon);
+    // Determinista con seed y priors en clip.
+    const otro = dreamConsolidate(base, perdedor, 50, 99);
+    expect(sonado.priors).toEqual(otro.priors);
+    for (const v of Object.values(sonado.priors)) {
+      expect(v).toBeGreaterThanOrEqual(0.05);
+      expect(v).toBeLessThanOrEqual(0.95);
+    }
   });
 });

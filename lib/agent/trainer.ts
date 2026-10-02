@@ -50,12 +50,12 @@ export function mapearAccionSelfPlay(a: string): TipoMano {
 
 /**
  * Convierte una Experience de selfplay en HandRecord del agente.
+ * Si hay heroTrace real la usa (cartas/board/calle/acciones multi-acción
+ * reales, numRivales real); si no, fallback sintético actual.
  * - won = rewardBB > 0
- * - street: rotación determinista preflop/flop/turn/river por índice (cubre las 4
- *   calles; Experience no trae calle).
- * - myCards/board en formato corto (board acorde a la calle).
- * - stackDelta = round(rewardBB*20), potWon = won ? stackDelta+60 : 0.
- * - numRivales = 5 (6-max).
+ * - street sintética: rotación determinista preflop/flop/turn/river por índice.
+ * - stackDelta = round(rewardBB*20), potWon = won ? stackDelta+60 : 0 (mismo en ambas ramas).
+ * - numRivales = 5 (6-max) en sintético; real en traza.
  */
 export function manoAHandRecord(
   exp: Experience,
@@ -68,12 +68,65 @@ export function manoAHandRecord(
     const h = Number.parseInt(partes[1] ?? "", 10);
     idx = Number.isFinite(h) ? h : 0;
   }
-  const calle = CALLES[(((idx % 4) + 4) % 4)] ?? "preflop";
-  const tipo = mapearAccionSelfPlay(exp.action);
   const rewardBB = Number.isFinite(exp.rewardBB) ? exp.rewardBB : 0;
   const stackDelta = Math.round(rewardBB * 20);
   const won = rewardBB > 0;
   const potWon = won ? Math.max(20, stackDelta + 60) : 0;
+
+  const trace = exp.heroTrace;
+  if (
+    trace &&
+    typeof trace.hole === "string" &&
+    trace.hole.length > 0 &&
+    Array.isArray(trace.actions)
+  ) {
+    const calleValida =
+      trace.street === "preflop" ||
+      trace.street === "flop" ||
+      trace.street === "turn" ||
+      trace.street === "river"
+        ? trace.street
+        : undefined;
+    const calle = calleValida ?? (CALLES[(((idx % 4) + 4) % 4)] ?? "preflop");
+    const acciones = trace.actions
+      .map((a) => {
+        const street =
+          a.street === "preflop" || a.street === "flop" || a.street === "turn" || a.street === "river"
+            ? a.street
+            : calle;
+        const tipo = mapearAccionSelfPlay(a.type);
+        const out: { street: string; type: TipoMano; amount?: number; toCall?: number } = {
+          street,
+          type: tipo,
+        };
+        if (typeof a.amount === "number" && Number.isFinite(a.amount) && a.amount > 0) {
+          out.amount = Math.max(1, Math.round(a.amount));
+        }
+        if (typeof a.toCall === "number" && Number.isFinite(a.toCall) && a.toCall > 0) {
+          out.toCall = Math.max(0, Math.round(a.toCall));
+        }
+        return out;
+      })
+      .filter((a) => a.type === "fold" || a.type === "check" || a.type === "call" || a.type === "raise" || a.type === "allin");
+    const numRivales =
+      typeof trace.numRivales === "number" && Number.isFinite(trace.numRivales)
+        ? Math.max(0, Math.round(trace.numRivales))
+        : 5;
+    return buildHandRecord({
+      won,
+      myCards: trace.hole,
+      board: typeof trace.board === "string" ? trace.board : "",
+      street: calle,
+      actions: acciones,
+      showdown,
+      potWon,
+      stackDelta,
+      numRivales,
+    });
+  }
+
+  const calle = CALLES[(((idx % 4) + 4) % 4)] ?? "preflop";
+  const tipo = mapearAccionSelfPlay(exp.action);
   const amount =
     tipo === "call" || tipo === "raise" || tipo === "allin"
       ? Math.max(10, Math.min(200, Math.round(Math.abs(stackDelta) / 2 + 20)))
@@ -117,8 +170,8 @@ function contarMovidos(priors: Record<string, number>): number {
 /**
  * Entrena el brain con `hands` manos de selfplay headless.
  * Por cada experiencia del héroe construye un HandRecord y aplica reflectOnHand;
- * cada 10 manos aplica dreamConsolidate(brain, rec, 20) con seed derivada.
- * 1000 manos <8s (selfplay ~4s + ~1000 reflects + 100 sueños x20).
+ * cada 50 manos aplica dreamConsolidate(brain, rec, 5) con seed derivada.
+ * 1000 manos <8s (selfplay ~4s + ~1000 reflects + 20 sueños x5).
  */
 export async function trainBatch(brain: Brain, opts: TrainOpts = {}): Promise<TrainResult> {
   const hands = opts.hands ?? 1000;
@@ -140,9 +193,9 @@ export async function trainBatch(brain: Brain, opts: TrainOpts = {}): Promise<Tr
     const rec = manoAHandRecord(exp, i, false);
     const r = reflectOnHand(actual, rec);
     actual = r.brain;
-    if ((i + 1) % 10 === 0) {
+    if ((i + 1) % 50 === 0) {
       try {
-        actual = dreamConsolidate(actual, rec, 20, (seed ^ (i + 1)) >>> 0);
+        actual = dreamConsolidate(actual, rec, 5, (seed ^ (i + 1)) >>> 0);
       } catch {
         // best-effort: el sueño nunca rompe el entrenamiento real
       }

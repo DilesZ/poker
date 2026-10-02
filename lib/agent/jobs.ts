@@ -17,9 +17,26 @@ export interface TrainJob {
   updatedAt: number;
 }
 
+export interface EvalJob {
+  id: string;
+  status: "done" | "error";
+  hands: number;
+  bb100: number;
+  sd: number;
+  ci95: number;
+  showdownPct: number;
+  brainDecisions: number;
+  seed: number;
+  error?: string;
+  startedAt: number;
+  updatedAt: number;
+}
+
 const LATEST_KEY = "agent:train:latest";
+const LATEST_EVAL_KEY = "agent:eval:latest";
 const TTL_JOB = 7 * 24 * 3600;
 const MEM_KEY = "__poker_train_latest__";
+const MEM_EVAL_KEY = "__poker_eval_latest__";
 
 function memoria(): { job: TrainJob | null } {
   const g = globalThis as unknown as Record<string, unknown>;
@@ -41,6 +58,65 @@ export function __clearTrainJob(): void {
 
 function clonar(j: TrainJob): TrainJob {
   return { ...j };
+}
+
+function memoriaEval(): { job: EvalJob | null } {
+  const g = globalThis as unknown as Record<string, unknown>;
+  const h = g[MEM_EVAL_KEY] as { job: EvalJob | null } | undefined;
+  if (h && typeof h === "object" && "job" in h) return h;
+  const nuevo: { job: EvalJob | null } = { job: null };
+  g[MEM_EVAL_KEY] = nuevo;
+  return nuevo;
+}
+
+/** Limpia la última evaluación en memoria (solo tests). */
+export function __clearEvalJob(): void {
+  try {
+    memoriaEval().job = null;
+  } catch {
+    // nunca lanza
+  }
+}
+
+function clonarEval(j: EvalJob): EvalJob {
+  return { ...j };
+}
+
+/** Guarda la última evaluación terminada. Nunca lanza. */
+export async function recordEvalJob(job: EvalJob): Promise<void> {
+  try {
+    memoriaEval().job = clonarEval(job);
+    if (kvConfigurado()) {
+      try {
+        await kvEscribirJSON(LATEST_EVAL_KEY, job, TTL_JOB);
+      } catch {
+        // best-effort
+      }
+    }
+  } catch {
+    // nunca lanza
+  }
+}
+
+/** Lee la última evaluación (KV → memoria). Null si nunca hubo. Nunca lanza. */
+export async function loadLatestEvalJob(): Promise<EvalJob | null> {
+  try {
+    if (kvConfigurado()) {
+      try {
+        const raw = await kvLeerJSON<EvalJob>(LATEST_EVAL_KEY);
+        if (raw && typeof raw === "object" && typeof (raw as EvalJob).updatedAt === "number") {
+          memoriaEval().job = clonarEval(raw as EvalJob);
+          return clonarEval(raw as EvalJob);
+        }
+      } catch {
+        // cae a memoria
+      }
+    }
+    const mem = memoriaEval().job;
+    return mem ? clonarEval(mem) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Guarda el último entrenamiento terminado. Nunca lanza. */

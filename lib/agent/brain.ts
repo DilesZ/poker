@@ -61,6 +61,8 @@ export interface BrainLegal {
   toCall: number;
   pot: number;
   stack: number;
+  /** Ciega grande para el veto preflop (toCall>1bb con basura→fold). Opcional, default 20. */
+  bb?: number;
 }
 
 export interface BrainContext {
@@ -159,20 +161,34 @@ export function createBrain(): Brain {
 }
 
 /** Elige acción: epsilon-greedy sobre priors + shape por cartas (V3).
- * Shape: fold premia debilidad (0.5-strength)*0.35; call/check (strength-0.5)*0.25;
+ * Shape: fold premia debilidad (0.5-strength)*0.35 (preflop (0.45-strength)*0.6,
+ * más duro con basura); call/check (strength-0.5)*0.25;
  * raise/allin (strength-0.5)*0.45. Sin strength (0.5) el shape es 0: matemática
- * vieja intacta. Ajuste rival: mesa loose (rivalLoose>0.45) call +0.03 y raise
+ * vieja intacta. Disciplina preflop: con strength<0.42 y toCall>1bb (bb de
+ * legal.bb, default 20; si toCall<=0 no hay veto) se vetan call/raise/allin
+ * (solo fold). Ajuste rival: mesa loose (rivalLoose>0.45) call +0.03 y raise
  * con strong +0.04 (la loose paga de más: se extrae valor); mesa nit
  * (rivalLoose<0.2) fold con mid -0.02 (ante nits que casi nunca farolean, el
  * fold marginal pierde atractivo: se respeta menos su agresión). Mantiene el
  * veto pot-odds para call y el UCB/epsilon efectivo. */
 export function chooseBrainAction(brain: Brain, legal: BrainLegal, ctx: BrainContext): BrainAction {
-  const candidatos = legal.candidates;
+  let candidatos = legal.candidates;
   if (candidatos.length === 0) {
     // Defensa ante un motor que no ofrezca candidatos (no debería ocurrir).
     return { type: legal.toCall > 0 ? "fold" : "check" };
   }
   if (candidatos.length === 1) return conTamano(candidatos[0] as BrainAction, legal);
+
+  // Disciplina preflop: basura (<0.42) ante precio (>1bb) → solo fold.
+  // No veta el check gratis (toCall<=0): BTN gratis ve flop.
+  const strengthVeto = ctx.strength ?? 0.5;
+  const bb = legal.bb ?? 20;
+  if (ctx.street === "preflop" && legal.toCall > 0 && strengthVeto < 0.42 && legal.toCall > 1 * bb) {
+    const filtrados = candidatos.filter((a) => a.type === "fold");
+    if (filtrados.length === 0) return { type: "fold" };
+    if (filtrados.length === 1) return conTamano(filtrados[0] as BrainAction, legal);
+    candidatos = filtrados;
+  }
 
   const clave = claveDesdeContexto(ctx);
   const visits = brain.counts?.[clave] ?? 0;
@@ -187,12 +203,13 @@ export function chooseBrainAction(brain: Brain, legal: BrainLegal, ctx: BrainCon
   const strength = ctx.strength ?? 0.5;
   const bucket = bucketFuerza(strength);
   const rl = ctx.rivalLoose;
+  const esPreflop = ctx.street === "preflop";
   let mejor = candidatos[0] as BrainAction;
   let mejorPuntaje = Number.NEGATIVE_INFINITY;
   for (const accion of candidatos) {
     const base = priorEvaluado(brain, clave, accion, legal);
     let shape: number;
-    if (accion.type === "fold") shape = (0.5 - strength) * 0.35;
+    if (accion.type === "fold") shape = esPreflop ? (0.45 - strength) * 0.6 : (0.5 - strength) * 0.35;
     else if (accion.type === "call" || accion.type === "check")
       shape = (strength - 0.5) * 0.25;
     else shape = (strength - 0.5) * 0.45;

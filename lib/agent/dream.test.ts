@@ -1,5 +1,5 @@
 // Tests de dream consolidation (3): mueve más con 200, clip, determinista.
-// EV-ponderado: flip won?0.08:0.20, jitter ±25%, alto EV (|delta|>100) duplica.
+// EV-ponderado: flip simétrico 0.05/0.05, jitter ±25%, alto EV (|delta|>100) duplica.
 // V3: claves ricas con fuerza (weak/mid/strong) bajo demanda → distancia por unión.
 import { describe, expect, it } from "vitest";
 import { createBrain } from "./brain";

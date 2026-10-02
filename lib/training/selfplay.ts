@@ -262,6 +262,48 @@ export function decideWithStrategy(
   return base;
 }
 
+/**
+ * Hook de decisión parametrizable (héroe override en evaluate).
+ * Por defecto delega en decideWithStrategy; `seat` solo selecciona
+ * quién decide (el override del héroe lo usa evaluate).
+ */
+export function decideFor(
+  seat: number,
+  strength: number,
+  toCall: number,
+  pot: number,
+  stack: number,
+  bb: number,
+  pos: TablePosition,
+  working: StrategyVersion,
+): AiAction {
+  void seat;
+  return decideWithStrategy(strength, toCall, pot, stack, bb, pos, working);
+}
+
+const RANGOS_CORTOS: Record<number, string> = { 11: "J", 12: "Q", 13: "K", 14: "A" };
+
+/** Carta corta "A♠" para la traza real del héroe. */
+function cartaCorta(c: Card): string {
+  return `${RANGOS_CORTOS[c.rank] ?? c.rank}${c.suit}`;
+}
+
+/** bet→raise, all-in→allin, resto igual en minúsculas. */
+function mapHeroType(a: string): string {
+  const t = (a ?? "").trim().toLowerCase();
+  if (t === "bet") return "raise";
+  if (t === "all-in" || t === "allin") return "allin";
+  return t;
+}
+
+/** Calle final desde el board (claves del trainer: preflop/flop/turn/river). */
+function calleFinal(boardLen: number): string {
+  if (boardLen >= 5) return "river";
+  if (boardLen === 4) return "turn";
+  if (boardLen === 3) return "flop";
+  return "preflop";
+}
+
 function zeroByPosition(): Record<TablePosition, number> {
   return { BTN: 0, SB: 0, BB: 0, EP: 0, MP: 0, CO: 0 };
 }
@@ -374,6 +416,8 @@ export function runSelfPlay(
       const heroHole: Card[] = [...(state.players[0]?.hole ?? [])];
       const heroPos = positionOfSeat(0, button, NUM_PLAYERS);
       let heroLastAction = "check";
+      const heroHoleStr = heroHole.map(cartaCorta).join(" ");
+      const heroTraceActions: { street: string; type: string; amount?: number; toCall?: number }[] = [];
 
       // Traza v2 por jugador: una entrada por decisión (pos/handIdx/action/strength/toCall/pot).
       // Se registra para los 6 (coste acotado: arrays pequeños por mano) y se actualiza TODOs al final.
@@ -430,7 +474,7 @@ export function runSelfPlay(
               }
             }
             const pos = seatPos[p.id] ?? positionOfSeat(p.id, button, NUM_PLAYERS);
-            const act = decideWithStrategy(strength, toCall, state.pot, p.stack, BB, pos, working);
+            const act = decideFor(p.id, strength, toCall, state.pot, p.stack, BB, pos, working);
             // Traza por decisión (los 6 jugadores).
             const entry: DecisionTrace = {
               pos,
@@ -442,7 +486,20 @@ export function runSelfPlay(
             };
             if (act.action === "bet") entry.amount = act.amount;
             traces[p.id]?.push(entry);
-            if (p.id === 0) heroLastAction = act.action;
+            if (p.id === 0) {
+              heroLastAction = act.action;
+              const streetNow = streets[si] ?? "preflop";
+              const heroEntry: {
+                street: string;
+                type: string;
+                amount?: number;
+                toCall?: number;
+              } = { street: streetNow, type: mapHeroType(act.action), toCall };
+              if ("amount" in act && typeof (act as { amount?: unknown }).amount === "number") {
+                heroEntry.amount = (act as { amount: number }).amount;
+              }
+              heroTraceActions.push(heroEntry);
+            }
 
             if (act.action === "fold") {
               p.folded = true;
@@ -531,6 +588,13 @@ export function runSelfPlay(
         position: heroPos,
         action: heroLastAction,
         rewardBB,
+        heroTrace: {
+          hole: heroHoleStr,
+          board: state.board.map(cartaCorta).join(" "),
+          street: calleFinal(state.board.length),
+          actions: heroTraceActions,
+          numRivales: 5,
+        },
       });
 
       // ---- Aprendizaje v2: 6 updates/mano + thresholds + sizing ----

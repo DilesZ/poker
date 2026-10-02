@@ -22,6 +22,22 @@ interface TrainResp {
   error?: string;
 }
 
+interface EvalResp {
+  hands: number;
+  bb100: number;
+  sd: number;
+  ci95: number;
+  showdownPct: number;
+  brainDecisions: number;
+  error?: string;
+}
+
+interface EvalHist {
+  fecha: number;
+  bb100: number;
+  ci95: number;
+}
+
 const VACIO: Resumen = {
   handsPlayed: 0,
   epsilon: 0.9,
@@ -44,6 +60,10 @@ export default function GlobalBrainPanel() {
   const [resultado, setResultado] = useState<string | null>(null);
   const [terminado, setTerminado] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [evaluando, setEvaluando] = useState(false);
+  const [evalResultado, setEvalResultado] = useState<string | null>(null);
+  const [evalError, setEvalError] = useState<string | null>(null);
+  const [evalHist, setEvalHist] = useState<EvalHist[]>([]);
   const cancelar = useRef(false);
 
   const cargar = useCallback(async () => {
@@ -72,6 +92,26 @@ export default function GlobalBrainPanel() {
   useEffect(() => {
     void cargar();
   }, [cargar]);
+
+  const cargarEval = useCallback(async () => {
+    try {
+      const res = await fetch("/api/agent/eval", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = (await res.json()) as { ultimo?: EvalResp & { bb100?: number } | null };
+      const u = data?.ultimo as unknown as Record<string, unknown> | null | undefined;
+      if (u && typeof u === "object" && typeof u["bb100"] === "number") {
+        const bb = u["bb100"] as number;
+        const ci = typeof u["ci95"] === "number" ? (u["ci95"] as number) : 0;
+        setEvalHist((h) => (h.length > 0 ? h : [{ fecha: Date.now(), bb100: bb, ci95: ci }]));
+      }
+    } catch {
+      // best-effort: el historial queda vacío
+    }
+  }, []);
+
+  useEffect(() => {
+    void cargarEval();
+  }, [cargarEval]);
 
   useEffect(() => () => {
     cancelar.current = true;
@@ -134,6 +174,47 @@ export default function GlobalBrainPanel() {
   }
 
   const pct = objetivo > 0 ? Math.min(100, Math.round((hechas / objetivo) * 100)) : 0;
+
+  async function evaluar() {
+    if (entrenando || evaluando) return;
+    setEvaluando(true);
+    setEvalResultado(null);
+    setEvalError(null);
+    try {
+      const semilla = (Date.now() ^ Math.floor(Math.random() * 1e9)) >>> 0;
+      const res = await fetch("/api/agent/eval", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ hands: 1000, seed: semilla }),
+      });
+      const data = (await res.json()) as EvalResp;
+      if (res.status === 501) {
+        setEvalResultado("Evaluador aún no disponible (501).");
+        return;
+      }
+      if (!res.ok || data.error) {
+        setEvalError(data.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      const bb = typeof data.bb100 === "number" ? data.bb100 : 0;
+      const ci = typeof data.ci95 === "number" ? data.ci95 : 0;
+      const n = typeof data.hands === "number" ? data.hands : 1000;
+      const swRaw = typeof data.showdownPct === "number" ? data.showdownPct : 0;
+      const swPct = swRaw <= 1 ? swRaw * 100 : swRaw;
+      const dec = typeof data.brainDecisions === "number" ? data.brainDecisions : 0;
+      const signo = bb >= 0 ? "+" : "";
+      setEvalResultado(
+        `${signo}${bb.toFixed(1)} ±${ci.toFixed(1)} bb/100 (IC95, N=${n}) · showdown ${swPct.toFixed(0)}% · decisiones ${dec}`,
+      );
+      setEvalHist((h) => [{ fecha: Date.now(), bb100: bb, ci95: ci }, ...h].slice(0, 10));
+    } catch (e) {
+      setEvalError(e instanceof Error ? e.message : "fallo de red");
+    } finally {
+      setEvaluando(false);
+    }
+  }
+
+  const maxAbsEval = Math.max(1, ...evalHist.map((e) => Math.abs(e.bb100)));
 
   return (
     <section className="poker-panel" aria-label="Cerebro global del servidor">
@@ -243,6 +324,59 @@ export default function GlobalBrainPanel() {
         persiste entre PCs vía KV (TTL 30 días). También puedes consultar{" "}
         <code>/api/agent/train</code> (GET) y <code>/api/agent/brain</code>.
       </p>
+      <section aria-label="Evaluación del cerebro">
+        <h3>📏 Evaluación (¿gana?)</h3>
+        <p className="poker-muted">
+          Solo mide, no modifica el cerebro: juega 1000 manos del cerebro contra la heurística.
+          Criterio de rentable: media &gt;+2 bb/100 con límite inferior del IC95% &gt;0 en 20k
+          manos (2 sets de seeds).
+        </p>
+        {evalError ? <p className="poker-muted">Aviso eval: {evalError}</p> : null}
+        {evalResultado ? (
+          <p className="poker-muted" role="status">
+            {evalResultado}
+          </p>
+        ) : null}
+        <div className="train-actions">
+          <button
+            type="button"
+            className="btn-ps btn-new"
+            disabled={entrenando || evaluando}
+            onClick={() => void evaluar()}
+          >
+            {evaluando ? "Evaluando…" : "Evaluar 1000 manos vs heurística"}
+          </button>
+        </div>
+        {evalHist.length > 0 ? (
+          <ul className="poker-muted" aria-label="Historial de evaluaciones">
+            {evalHist.map((e) => {
+              const ancho = Math.min(100, Math.round((Math.abs(e.bb100) / maxAbsEval) * 100));
+              const color = e.bb100 >= 0 ? "#2a7" : "#c33";
+              const signo = e.bb100 >= 0 ? "+" : "";
+              return (
+                <li key={e.fecha}>
+                  <span>
+                    {new Date(e.fecha).toLocaleTimeString()} · {signo}
+                    {e.bb100.toFixed(1)} ±{e.ci95.toFixed(1)}
+                  </span>{" "}
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      display: "inline-block",
+                      width: `${ancho}%`,
+                      maxWidth: "120px",
+                      height: "8px",
+                      background: color,
+                      verticalAlign: "middle",
+                    }}
+                  />
+                  <span aria-hidden="true">{"█".repeat(Math.min(10, Math.round(ancho / 10)))}</span>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+      </section>
     </section>
   );
 }

@@ -10,6 +10,14 @@ export interface Experience {
   action: string;
   /** Beneficio del héroe en big blinds (puede ser negativo). */
   rewardBB: number;
+  /** Traza real del héroe (seat 0): cartas/board/calle/acciones para datos reales. */
+  heroTrace?: {
+    hole: string;
+    board: string;
+    street: string;
+    actions: { street: string; type: string; amount?: number; toCall?: number }[];
+    numRivales: number;
+  };
 }
 
 export const EXPERIENCE_STORAGE_KEY = "poker-experience";

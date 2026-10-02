@@ -105,7 +105,7 @@ describe("endurecido cerebro", () => {
     });
     expect(claveSituacion(viejo)).toBe("flop/hasPot");
 
-    // Registro nuevo con rivales → clave rica V3 (sin pot/stack → mid, call sin dato → pricey, AKs liga pareja K → weak).
+    // Registro nuevo con rivales → clave rica V3 (sin pot/stack → mid, call sin dato → pricey, AKs liga pareja K con kicker A → mid).
     const nuevo = buildHandRecord({
       won: true,
       myCards: "A♠ K♠",
@@ -113,7 +113,7 @@ describe("endurecido cerebro", () => {
       actions: [{ street: "flop", type: "call", amount: 60, toCall: 60 }],
       numRivales: 1,
     });
-    expect(claveSituacion(nuevo)).toBe("flop/pricey/mid/HU/weak");
+    expect(claveSituacion(nuevo)).toBe("flop/pricey/mid/HU/mid");
 
     // El cerebro elige sin romper con claves nuevas (fallback 0.5).
     const legal = {

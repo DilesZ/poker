@@ -20,11 +20,11 @@ export function mulberry32(seed: number): () => number {
 }
 
 function variarRegistro(rec: HandRecord, rng: () => number): HandRecord {
-  // Las derrotas se re-imaginan más como victorias (0.20) que al revés (0.08):
-  // así el sueño busca líneas alternativas donde el EV perdido se recupera.
-  // Coherencia won/delta (el aprendizaje usa ventaja sobre stackDelta, no el
-  // flag binario): el flip invierte el signo del delta en vez del flag solo.
-  const flipProb = rec.won ? 0.08 : 0.2;
+  // Flip simétrico 0.05/0.05: el sueño ya no inventa victorias (antes 0.08/0.20
+  // sesgaba a imaginar que la derrota se recuperaba). Coherencia won/delta
+  // (el aprendizaje usa ventaja sobre stackDelta, no el flag binario): el
+  // flip invierte el signo del delta en vez del flag solo.
+  const flipProb = 0.05;
   const flip = rng() < flipProb;
   const jitter = 1 + (rng() * 0.5 - 0.25);
   let delta =

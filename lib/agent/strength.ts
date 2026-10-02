@@ -3,6 +3,7 @@
 // La fuerza NUNCA decide sola: es un shape aditivo en chooseBrainAction y un
 // bucket en la clave de situación, así el aprendizaje sigue mandando.
 import { evaluate7 } from "../poker/evaluator";
+import { countOuts, equityRegla24 } from "../poker/equity";
 import type { Card, Rank, Suit } from "../poker/types";
 
 export type StrengthBucket = "weak" | "mid" | "strong";
@@ -28,7 +29,11 @@ type HoleBoard =
  * Acepta "A♠ K♠", "As Ks", arrays de cartas u objetos {rank,suit}.
  * Si no puede parsear (0-1 cartas útiles) devuelve 0.5.
  * Preflop (sin board): par 0.55+rank/14*0.4, suited+0.06, penalización por gap,
- * bonus Ax +0.02. Postflop (5-7 cartas): evaluate7 → 0.12+(cat/8)*0.78.
+ * bonus Ax +0.02. Postflop (5-7 cartas): max(made, drawEquity) donde made usa
+ * tabla calibrada (pareja 0.45-0.53 por kicker, doble 0.58, trío 0.66,
+ * escalera 0.74, color 0.81, full 0.88, poker 0.94, escalera color 0.98) y
+ * drawEquity=equityRegla24(countOuts(hole2,board), street) con street por nº
+ * de board (3→flop, 4→turn, 5+→river=0).
  */
 export function estimateCardStrength(hole: HoleBoard, board?: HoleBoard): number {
   const holeCards = parseCards(hole);
@@ -46,10 +51,50 @@ export function estimateCardStrength(hole: HoleBoard, board?: HoleBoard): number
   try {
     const mano = total.slice(0, 7);
     const r = evaluate7(mano);
-    return limitar(0.12 + (r.category / 8) * 0.78, 0, 1);
+    const made = madeStrength(r.category, r.tiebreak[0] ?? 2);
+    // Fuga EV draws: el proyecto a color/escalera también vale (regla 2/4).
+    let drawEquity = 0;
+    try {
+      const hole2 = holeCards.slice(0, 2) as Card[];
+      const street =
+        boardCards.length <= 3 ? "flop" : boardCards.length === 4 ? "turn" : "river";
+      drawEquity = equityRegla24(countOuts(hole2, boardCards), street);
+    } catch {
+      drawEquity = 0;
+    }
+    return limitar(Math.max(made, drawEquity), 0, 1);
   } catch {
     return 0.5;
   }
+}
+
+/** Fuerza de mano hecha 0-1 calibrada por categoría (0=high … 8=straight flush).
+ * La fórmula vieja 0.12+(cat/8)*0.78 dejaba cualquier pareja en ~0.22 (weak):
+ * el cerebro foldeaba top-pair débil y todo draw. Ahora la pareja entra en
+ * mid (0.45-0.53 según kicker) y compite: el aprendizaje decide con datos. */
+function madeStrength(category: number, top: number): number {
+  const kicker = limitar(((top - 2) / 12) * 0.08, 0, 0.08);
+  const base =
+    category >= 8
+      ? 0.98
+      : category === 7
+        ? 0.94
+        : category === 6
+          ? 0.88
+          : category === 5
+            ? 0.81
+            : category === 4
+              ? 0.74
+              : category === 3
+                ? 0.66
+                : category === 2
+                  ? 0.58
+                  : category === 1
+                    ? 0.45
+                    : 0.12;
+  // Kicker suma hasta +0.08 (top-pair con As vale más que con doses);
+  // el techo 0.98 deja margen: 1.0 queda reservado, nada es invencible.
+  return limitar(base + (category === 0 ? kicker + 0.02 : kicker), 0, 0.98);
 }
 
 /** Heurística preflop 0-1 (ver cabecera). */

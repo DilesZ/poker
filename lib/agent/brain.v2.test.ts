@@ -33,16 +33,16 @@ describe("brain V2", () => {
       numRivales: 1,
     });
     const { brain: aprendido, lesson } = reflectOnHand(brain, record);
-    // Claves ricas V3 esperadas (stack 300→mid, HU, fuerza progresiva):
+    // Claves ricas V3 esperadas (stack mid sin dato, HU, fuerza progresiva):
     // preflop AKs solo hole → 0.819 strong; flop/turn con K♦ 7♣ 2♠ → pareja K
-    // (cat1 → 0.2175 weak). Preflop call 20 vs pot 200 → cheap; flop check y
-    // turn raise sin precio → free.
+    // con kicker A → 0.523 mid (tabla calibrada). Preflop call 20 vs pot 200 →
+    // cheap; flop check y turn raise sin precio → free.
     expect(aprendido.priors["preflop/cheap/mid/HU/strong/call"]).toBeGreaterThan(0.5);
-    expect(aprendido.priors["flop/free/mid/HU/weak/check"]).toBeGreaterThan(0.5);
-    expect(aprendido.priors["turn/free/mid/HU/weak/raise"]).toBeGreaterThan(0.5);
+    expect(aprendido.priors["flop/free/mid/HU/mid/check"]).toBeGreaterThan(0.5);
+    expect(aprendido.priors["turn/free/mid/HU/mid/raise"]).toBeGreaterThan(0.5);
     // La última (d=0) aprende más que la primera (d=2, discount 0.64).
     const primera = aprendido.priors["preflop/cheap/mid/HU/strong/call"] as number;
-    const ultima = aprendido.priors["turn/free/mid/HU/weak/raise"] as number;
+    const ultima = aprendido.priors["turn/free/mid/HU/mid/raise"] as number;
     expect(ultima).toBeGreaterThan(primera);
     expect(lesson?.actionsCredited).toBe(3);
     expect(lesson?.magnitude).toBeGreaterThan(0.5);
@@ -91,7 +91,8 @@ describe("brain V2", () => {
     expect(pricey).toBe("flop/pricey/deep/HU/mid");
     expect(free).not.toBe(pricey);
 
-    // claveSituacion rica V3 también distingue (A♠ K♠ + K♦ 7♣ 2♠ → pareja K → weak).
+    // claveSituacion rica V3 también distingue (A♠ K♠ + K♦ 7♣ 2♠ → pareja K
+    // con kicker A → 0.523 mid).
     const rHu = buildHandRecord({
       won: true,
       myCards: "A♠ K♠",
@@ -110,8 +111,8 @@ describe("brain V2", () => {
       stackDelta: 100,
       numRivales: 3,
     });
-    expect(claveSituacion(rHu)).toBe("flop/cheap/mid/HU/weak");
-    expect(claveSituacion(rMulti)).toBe("flop/cheap/mid/multi/weak");
+    expect(claveSituacion(rHu)).toBe("flop/cheap/mid/HU/mid");
+    expect(claveSituacion(rMulti)).toBe("flop/cheap/mid/multi/mid");
     expect(claveSituacion(rHu)).toContain("/HU");
     expect(claveSituacion(rMulti)).toContain("/multi");
     expect(claveSituacion(rHu)).not.toBe(claveSituacion(rMulti));
@@ -153,8 +154,8 @@ describe("brain V2", () => {
       numRivales: 1,
     });
     const { brain: aprendido } = reflectOnHand(brain, record);
-    const clave = claveSituacion(record); // flop/cheap/mid/HU/weak (pareja K)
-    expect(clave).toBe("flop/cheap/mid/HU/weak");
+    const clave = claveSituacion(record); // flop/cheap/mid/HU/mid (pareja K 0.52)
+    expect(clave).toBe("flop/cheap/mid/HU/mid");
     const usada = aprendido.priors[`${clave}/call`] as number;
     const noUsada = aprendido.priors[`${clave}/fold`] as number;
     expect(usada).toBeGreaterThan(0.5);
