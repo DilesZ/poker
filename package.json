@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "liga": "tsx scripts/liga-local.ts",
-    "evaluate": "tsx scripts/evaluate.ts"
+    "evaluate": "tsx scripts/evaluate.ts",
+    "train": "tsx scripts/train.ts"
   },
   "dependencies": {
     "next": "16.3.6",

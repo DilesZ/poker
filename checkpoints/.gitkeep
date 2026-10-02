@@ -1,0 +1,2 @@
+# Los checkpoints de entrenamiento CFR se generan con `npm run train`.
+# Este archivo solo existe para que el directorio viaje en git.

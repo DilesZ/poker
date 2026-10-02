@@ -94,7 +94,7 @@ acoplamientos, duplicaciones, código crítico, qué no tocar).
 | P1 | Motor `lib/engine/` + 26 tests | Hecho (84/84) |
 | P2 | Infosets + `ActionAbstractionConfig` + test no-leakage | Siguiente |
 | P3 | 7 baselines congelados + `evaluateAgent` + `npm run evaluate` + matriz base | — |
-| P4/P5 | CFR → CFR+ validado en Kuhn/Leduc, luego Hold'em | — |
+| P4/P5 | CFR → CFR+ validado en Kuhn/Leduc, luego Hold'em | P4 hecho (Kuhn expl 0.001, Leduc 0.018); P5 siguiente |
 | P6+ | Population, trainer CLI, UI lab, equity/rangos, exploitability, coach | En orden |
 | Deep CFR | Solo con P1-P5 verdes | Último |
 
