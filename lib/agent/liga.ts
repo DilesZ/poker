@@ -300,6 +300,7 @@ export function jugarLiga(base: Brain, opts: LigaOpts = {}): LigaResult {
         const r = reflectOnHand(actual, rec, {
           decayEpsilon: ultimo,
           cuentaMano: ultimo,
+          epsilonDecay: 0.995,
         });
         actual = r.brain;
         reflects++;

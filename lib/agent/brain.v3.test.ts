@@ -514,3 +514,95 @@ describe("brain V3: fugas EV tapadas (4)", () => {
     }
   });
 });
+
+describe("brain anti-bingo: allin con guardarraíl (3)", () => {
+  it("A1. mano media deep nunca shovea (filtrado antes de epsilon)", () => {
+    fijarRandom(0.0); // fuerza exploración: ni así sale allin
+    const brain = { ...createBrain(), epsilon: 0.9 };
+    const legal = {
+      candidates: [
+        { type: "fold" as const },
+        { type: "call" as const },
+        { type: "allin" as const },
+      ],
+      toCall: 60,
+      pot: 200,
+      stack: 1000,
+      bb: 20,
+    };
+    const ctx = {
+      street: "flop" as const,
+      boardLen: 3,
+      myStack: 1000,
+      pot: 200,
+      toCall: 60,
+      numRivales: 1,
+      strength: 0.5,
+    };
+    for (let i = 0; i < 5; i++) {
+      expect(chooseBrainAction(brain, legal, ctx).type).not.toBe("allin");
+    }
+  });
+
+  it("A2. short-stack sí puede shovear (push/fold <10bb es correcto)", () => {
+    fijarRandom(0.99);
+    const brain = createBrain();
+    // Clave rica real: stack 150→short, cheap, HU, strength 0.3→weak... ojo:
+    // con weak el shape castiga; usa mid (0.5) para aislar el guardarraíl.
+    brain.priors["preflop/cheap/short/HU/mid/allin"] = 0.9;
+    const legal = {
+      candidates: [{ type: "fold" as const }, { type: "allin" as const }],
+      toCall: 20,
+      pot: 100,
+      stack: 150, // 7.5bb
+      bb: 20,
+    };
+    const accion = chooseBrainAction(
+      { ...brain, epsilon: 0 },
+      legal,
+      {
+        street: "preflop" as const,
+        boardLen: 0,
+        myStack: 150,
+        pot: 100,
+        toCall: 20,
+        numRivales: 1,
+        strength: 0.5,
+      },
+    );
+    expect(accion.type).toBe("allin");
+  });
+
+  it("A3. exploración ponderada: allin permitido sale <50% de 300", () => {
+    (Math as unknown as { random: () => number }).random = RANDOM_ORIG;
+    const brain = { ...createBrain(), epsilon: 0.9 };
+    const legal = {
+      candidates: [
+        { type: "fold" as const },
+        { type: "call" as const },
+        { type: "raise" as const },
+        { type: "allin" as const },
+      ],
+      toCall: 60,
+      pot: 200,
+      stack: 1000,
+      bb: 20,
+    };
+    const ctx = {
+      street: "flop" as const,
+      boardLen: 3,
+      myStack: 1000,
+      pot: 200,
+      toCall: 60,
+      numRivales: 1,
+      strength: 0.9, // fuerte: allin permitido
+    };
+    let shoves = 0;
+    const N = 300;
+    for (let i = 0; i < N; i++) {
+      if (chooseBrainAction(brain, legal, ctx).type === "allin") shoves++;
+    }
+    // Esperado ≈10% (0.9 explore × 0.1 allin + explotación ocasional).
+    expect(shoves / N).toBeLessThan(0.5);
+  });
+});

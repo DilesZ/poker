@@ -166,7 +166,8 @@ export function createBrain(): Brain {
  * raise/allin (strength-0.5)*0.45. Sin strength (0.5) el shape es 0: matemática
  * vieja intacta. Disciplina preflop: con strength<0.42 y toCall>1bb (bb de
  * legal.bb, default 20; si toCall<=0 no hay veto) se vetan call/raise/allin
- * (solo fold). Ajuste rival: mesa loose (rivalLoose>0.45) call +0.03 y raise
+ * (solo fold). Anti-bingo: el allin se filtra salvo mano fuerte (>0.55) o
+ * short-stack (≤10bb); en exploración sale con prob 0.1. Ajuste rival: mesa loose (rivalLoose>0.45) call +0.03 y raise
  * con strong +0.04 (la loose paga de más: se extrae valor); mesa nit
  * (rivalLoose<0.2) fold con mid -0.02 (ante nits que casi nunca farolean, el
  * fold marginal pierde atractivo: se respeta menos su agresión). Mantiene el
@@ -190,13 +191,26 @@ export function chooseBrainAction(brain: Brain, legal: BrainLegal, ctx: BrainCon
     candidatos = filtrados;
   }
 
+  // Guardarraíl anti-bingo: el all-in exige mano fuerte o short-stack.
+  // Sin esto, la exploración uniforme (allin = 1 de 4-5 candidatos) shovea
+  // ~20% de las decisiones aleatorias y la liga degenera en lotería all-in
+  // (showdown 100%, EV muy negativo): los priors aprenden ruido, no poker.
+  // El short-stack push/fold (<10bb) sigue permitido: es juego correcto.
+  const shortStack = legal.stack > 0 && legal.stack <= 10 * bb;
+  if (!shortStack && strengthVeto <= 0.55) {
+    const sinAllin = candidatos.filter((a) => a.type !== "allin");
+    if (sinAllin.length > 0) candidatos = sinAllin;
+  }
+  if (candidatos.length === 1) return conTamano(candidatos[0] as BrainAction, legal);
+
   const clave = claveDesdeContexto(ctx);
   const visits = brain.counts?.[clave] ?? 0;
   // Exploración efectiva: decae con visitas, suelo 5%.
   const effEps = Math.max(0.05, Math.min(brain.epsilon, 1 / Math.sqrt(1 + visits)));
 
-  // Exploración: azar puro entre candidatos legales (el raise abre 0.5*pot).
-  if (Math.random() < effEps) return conTamano(elegirAzar(candidatos), legal);
+  // Exploración ponderada: el all-in (si sobrevivió al guardarraíl) sale con
+  // prob 0.1; el resto se reparte el 0.9. Azar puro sobre-shoveaba.
+  if (Math.random() < effEps) return conTamano(elegirAzarPonderado(candidatos), legal);
 
   // Explotación: mejor prior + shape por cartas + ajuste rival + bonus UCB.
   const bonus = 0.01 / (1 + visits);
@@ -238,6 +252,9 @@ export function chooseBrainAction(brain: Brain, legal: BrainLegal, ctx: BrainCon
 export interface ReflectOpts {
   decayEpsilon?: boolean;
   cuentaMano?: boolean;
+  /** Tasa de decaimiento (default 0.98). La liga usa 0.995: con 6 reflects por
+   * mano el suelo 0.1 llegaría en ~18 manos y colapsaría la exploración. */
+  epsilonDecay?: number;
 }
 
 /** Aprende de la mano: ventaja vs baseline + crédito total a actionHistory.
@@ -255,6 +272,10 @@ export function reflectOnHand(
 ): { brain: Brain; lesson?: Lesson } {
   const decayEpsilon = opts.decayEpsilon ?? true;
   const cuentaMano = opts.cuentaMano ?? true;
+  const tasaDecay =
+    typeof opts.epsilonDecay === "number" && Number.isFinite(opts.epsilonDecay)
+      ? Math.min(0.999, Math.max(0.9, opts.epsilonDecay))
+      : EPSILON_DECAY;
   const epsilonAntes = brain.epsilon;
   const claveUltima = claveSituacion(record);
   const historial = record.actionHistory.filter(
@@ -328,7 +349,7 @@ export function reflectOnHand(
   }
 
   let epsilon = decayEpsilon
-    ? Math.max(EPSILON_MIN, redondear(epsilonAntes * EPSILON_DECAY, 6))
+    ? Math.max(EPSILON_MIN, redondear(epsilonAntes * tasaDecay, 6))
     : epsilonAntes;
   const handsPlayed = brain.handsPlayed + (cuentaMano ? 1 : 0);
   const lessonsAcum = [...brain.lessons];
@@ -476,6 +497,15 @@ function tamanoRaise(legal: BrainLegal): number {
 function elegirAzar(candidatos: BrainAction[]): BrainAction {
   const i = Math.floor(Math.random() * candidatos.length);
   return (candidatos[i] ?? candidatos[0]) as BrainAction;
+}
+
+/** Azar ponderado: allin 10%, resto uniforme (evita bingo exploratorio). */
+function elegirAzarPonderado(candidatos: BrainAction[]): BrainAction {
+  const allins = candidatos.filter((c) => c.type === "allin");
+  const resto = candidatos.filter((c) => c.type !== "allin");
+  if (allins.length === 0 || resto.length === 0) return elegirAzar(candidatos);
+  if (Math.random() < 0.1) return elegirAzar(allins);
+  return elegirAzar(resto);
 }
 
 interface LessonDatos {
