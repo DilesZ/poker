@@ -8,6 +8,8 @@ import { strategyMap, trainCFR } from "../lib/cfr/trainer";
 import type { CFRGame } from "../lib/cfr/game";
 import * as moduloKuhn from "../lib/games/kuhn";
 import * as moduloLeduc from "../lib/games/leduc";
+import { holdemHuGame } from "../lib/games/holdem-hu";
+import { loadEvTable, loadEvTie } from "../lib/games/buckets";
 
 export type AlgoritmoTrain = "cfr" | "cfr+";
 
@@ -25,7 +27,7 @@ export const TEXTO_USO: string =
   "\n" +
   "Opciones:\n" +
   "  --algorithm <id>  algoritmo: cfr|cfr+ (defecto: cfr)\n" +
-  "  --game <id>       juego: kuhn|leduc (defecto: kuhn)\n" +
+  "  --game <id>       juego: kuhn|leduc|holdem-hu-preflop (defecto: kuhn)\n" +
   "  --iterations <n>  nº de iteraciones, entero > 0 (defecto: 50000)\n" +
   "  --seed <n>        semilla RNG, entero >= 0 (defecto: 12345)\n" +
   "  --out <ruta>      ruta del checkpoint (defecto: checkpoints/kuhn-cfr-v1.json)\n" +
@@ -115,8 +117,8 @@ export function parseArgs(argv: string[]): OpcionesTrain {
     if (algorithm !== "cfr" && algorithm !== "cfr+") {
       throw new Error(`Algoritmo desconocido: "${algorithm}". Usa --algorithm cfr|cfr+.`);
     }
-    if (game !== "kuhn" && game !== "leduc") {
-      throw new Error(`Juego desconocido: "${game}". Usa --game kuhn|leduc.`);
+    if (game !== "kuhn" && game !== "leduc" && game !== "holdem-hu-preflop") {
+      throw new Error(`Juego desconocido: "${game}". Usa --game kuhn|leduc|holdem-hu-preflop.`);
     }
     if (!Number.isInteger(iterations) || iterations <= 0) {
       throw new Error(`Valor inválido para --iterations: "${iterations}". Debe ser un entero > 0.`);
@@ -218,12 +220,23 @@ function main(): void {
   }
   const modulo = opts.game === "leduc" ? moduloLeduc : moduloKuhn;
   let juego: CFRGame;
-  try {
-    juego = extraerJuego(modulo, opts.game);
-  } catch (err) {
-    console.error(err instanceof Error ? err.message : err);
-    process.exitCode = 1;
-    return;
+  if (opts.game === "holdem-hu-preflop") {
+    try {
+      // La tabla EV la genera `npm run compute-ev` (ver lib/games/buckets.ts).
+      juego = holdemHuGame(loadEvTable(), loadEvTie());
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : err);
+      process.exitCode = 1;
+      return;
+    }
+  } else {
+    try {
+      juego = extraerJuego(modulo, opts.game);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : err);
+      process.exitCode = 1;
+      return;
+    }
   }
   const resultado = trainCFR({ game: juego, iterations: opts.iterations, seed: opts.seed, algorithm: opts.algorithm });
   const media = strategyMap(resultado);

@@ -51,3 +51,29 @@ maniac: muchos all-ins). Celdas |bb/100| < ~15 vs maniac y < ~8 en resto:
 3. gto-lite solo pierde (marginalmente) con maniac: heurística sólida pero
    documentada como NO-GTO.
 4. Self-match tag-vs-tag (n=2000, seed 7): +0.05 bb/100 → suma cero verificada.
+
+---
+
+## CFR preflop HU v2 (2026-10-02, hito V3)
+
+Agente `cfr-preflop` (checkpoint `hu-cfrplus-v2.json`: CFR+ 20k iters,
+expl 0.028 en juego abstracto) + fallback tag postflop. Rival: baselines v0
+en motor completo (con postflop real). n=3000, seed 7.
+
+| rival | bb/100 | IC95% | veredicto |
+|---|---|---|---|
+| random | +274.2 | [+183.5, +365.0] | bate, significativo |
+| calling-station | +118.4 | [+96.7, +140.2] | bate, significativo |
+| nit | +26.6 | [-46.2, +99.4] | no concluyente |
+| tag | +42.3 | [-33.7, +118.3] | no concluyente |
+
+Miss-rate 0% vs random/station, 3.2% vs nit/tag (líneas tras el tope de
+3 raises van a fallback; documentado, no oculto). Crudos:
+`benchmarks/raw/cfr-preflop-vs-*.json`.
+
+Lectura honesta: el aprendizaje es real en el juego abstracto (expl
+0.153 → 0.028) y TRANSFIERE contra donantes, pero vs tag/nit la evidencia
+es positiva e insuficiente (harían falta ~15k manos para ±40). La estrategia
+aprendida casi nunca foldea preflop: es (casi) óptimo SIN postflop con odds
+3:1 (el BR lo confirma: 0.014 bb/mano), no intuición transferible al poker
+real. Postflop, 6-max y MCCFR quedan fuera de este hito por diseño.
