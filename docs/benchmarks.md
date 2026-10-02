@@ -71,6 +71,22 @@ Miss-rate 0% vs random/station, 3.2% vs nit/tag (líneas tras el tope de
 3 raises van a fallback; documentado, no oculto). Crudos:
 `benchmarks/raw/cfr-preflop-vs-*.json`.
 
+### CFR population v1 (2026-10-02, P6)
+
+Mismo agente + fallback, checkpoint `hu-cfrplus-pop-v1.json` (CFR+ 10k
+iters vs pool self50/uniform20/v2-30). n=3000, seed 7.
+
+| rival | bb/100 | IC95% | v2 (ref) |
+|---|---|---|---|
+| random | +453.9 | [+313.3, +594.4] | +274.2 |
+| calling-station | +85.9 | [+70.5, +101.3] | +118.4 |
+| nit | +8.3 | [-65.7, +82.3] | +26.6 |
+| tag | +7.9 | [-66.1, +81.9] | +42.3 |
+
+Miss 0% en los 4. Crudos: `benchmarks/raw/cfr-pop-vs-*.json`.
+Lectura: mejor puntual vs random, resto dentro del ruido (CIs solapan con
+v2). La pool con el propio v2 como miembro no degradó la transferencia.
+
 Lectura honesta: el aprendizaje es real en el juego abstracto (expl
 0.153 → 0.028) y TRANSFIERE contra donantes, pero vs tag/nit la evidencia
 es positiva e insuficiente (harían falta ~15k manos para ±40). La estrategia

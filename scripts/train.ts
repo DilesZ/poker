@@ -2,9 +2,12 @@
 // Uso: npm run train -- --algorithm cfr --game kuhn --iterations 50000 --seed 12345 --out checkpoints/kuhn-cfr-v1.json
 // Acepta --algorithm cfr|cfr+. Importa juegos por ruta relativa (sin alias "@" en runtime).
 import * as ruta from "node:path";
+import * as fs from "node:fs";
 import { exploitability } from "../lib/cfr/exploit";
 import { saveCheckpoint, toCheckpoint } from "../lib/cfr/checkpoint";
 import { strategyMap, trainCFR } from "../lib/cfr/trainer";
+import type { PopulationConfig, PopTrainResult } from "../lib/cfr/population";
+import { trainVsPopulation, validateDisjoint } from "../lib/cfr/population";
 import type { CFRGame } from "../lib/cfr/game";
 import * as moduloKuhn from "../lib/games/kuhn";
 import * as moduloLeduc from "../lib/games/leduc";
@@ -20,6 +23,10 @@ export interface OpcionesTrain {
   seed: number;
   out: string;
   help: boolean;
+  /** Población train (P6). Ausente = self-play puro (camino actual). */
+  population?: PopulationConfig;
+  /** Población eval (P6). Opcional; si viene debe ser disjunta de train. */
+  evalPopulation?: PopulationConfig;
 }
 
 export const TEXTO_USO: string =
@@ -31,10 +38,17 @@ export const TEXTO_USO: string =
   "  --iterations <n>  nº de iteraciones, entero > 0 (defecto: 50000)\n" +
   "  --seed <n>        semilla RNG, entero >= 0 (defecto: 12345)\n" +
   "  --out <ruta>      ruta del checkpoint (defecto: checkpoints/kuhn-cfr-v1.json)\n" +
+  "  --population <json|@fichero>       población train P6: JSON con forma PopulationConfig\n" +
+  "                                     ({ members: [{ id, kind, weight, checkpointPath? }] });\n" +
+  "                                     con `@ruta` se lee el fichero (relativo al cwd).\n" +
+  "                                     Ausente = self-play puro (camino actual intacto).\n" +
+  "  --eval-population <json|@fichero>  población eval P6 (opcional; debe ser disjunta\n" +
+  "                                     de train; sus ids van al checkpoint)\n" +
   "  --help, -h        muestra esta ayuda\n" +
   "\n" +
   "Ejemplos:\n" +
-  "  npm run train -- --algorithm cfr --game kuhn --iterations 50000 --seed 12345 --out checkpoints/kuhn-cfr-v1.json";
+  "  npm run train -- --algorithm cfr --game kuhn --iterations 50000 --seed 12345 --out checkpoints/kuhn-cfr-v1.json\n" +
+  "  npm run train -- --game kuhn --iterations 2000 --population '{\"members\":[{\"id\":\"self\",\"kind\":\"self\",\"weight\":1}]}'";
 
 function parseEnteroPositivo(texto: string, flag: string): number {
   const n = Number(texto);
@@ -60,6 +74,51 @@ function parseAlgoritmo(texto: string): AlgoritmoTrain {
   return texto;
 }
 
+/**
+ * Parsea el valor de --population / --eval-population.
+ * Acepta JSON inline o `@ruta` (fichero leído relativo al cwd).
+ * Lanza Error en español si el fichero no se lee o el JSON es inválido.
+ */
+export function parsePopulationArg(texto: string): PopulationConfig {
+  const recortado = texto.trim();
+  if (recortado === "") {
+    throw new Error(
+      "Población vacía: --population/--eval-population necesita JSON inline o @ruta. Usa --help para ver el uso.",
+    );
+  }
+  let jsonTexto = texto;
+  if (recortado.startsWith("@")) {
+    const rutaFichero = recortado.slice(1).trim();
+    if (rutaFichero === "") {
+      throw new Error('Población inválida: "@" sin ruta. Usa --population @ruta/al/fichero.json.');
+    }
+    const resuelta = ruta.isAbsolute(rutaFichero) ? rutaFichero : ruta.resolve(process.cwd(), rutaFichero);
+    try {
+      jsonTexto = fs.readFileSync(resuelta, "utf8");
+    } catch {
+      throw new Error(`No se pudo leer el fichero de población: "${rutaFichero}". Revisa la ruta.`);
+    }
+  }
+  let datos: unknown;
+  try {
+    datos = JSON.parse(jsonTexto) as unknown;
+  } catch {
+    throw new Error(
+      "Población con JSON inválido: se esperaba un PopulationConfig con { members: [...] }. Revisa --population/--eval-population.",
+    );
+  }
+  if (
+    datos === null ||
+    typeof datos !== "object" ||
+    !Array.isArray((datos as Record<string, unknown>)["members"])
+  ) {
+    throw new Error(
+      "Población inválida: se esperaba un objeto con { members: [...] } donde cada miembro tiene { id, kind, weight }. Revisa --population/--eval-population.",
+    );
+  }
+  return datos as PopulationConfig;
+}
+
 /** Parsea argv (sin node ni script). Lanza Error en español si algo es inválido. */
 export function parseArgs(argv: string[]): OpcionesTrain {
   let algorithm: AlgoritmoTrain = "cfr";
@@ -68,6 +127,8 @@ export function parseArgs(argv: string[]): OpcionesTrain {
   let seed = 12345;
   let out = "checkpoints/kuhn-cfr-v1.json";
   let help = false;
+  let population: PopulationConfig | undefined;
+  let evalPopulation: PopulationConfig | undefined;
 
   const tomarValor = (indice: number, flag: string): string => {
     const v: string | undefined = argv[indice];
@@ -106,6 +167,16 @@ export function parseArgs(argv: string[]): OpcionesTrain {
     } else if (arg === "--out") {
       out = tomarValor(i + 1, "--out");
       i++;
+    } else if (arg.startsWith("--population=")) {
+      population = parsePopulationArg(arg.slice("--population=".length));
+    } else if (arg === "--population") {
+      population = parsePopulationArg(tomarValor(i + 1, "--population"));
+      i++;
+    } else if (arg.startsWith("--eval-population=")) {
+      evalPopulation = parsePopulationArg(arg.slice("--eval-population=".length));
+    } else if (arg === "--eval-population") {
+      evalPopulation = parsePopulationArg(tomarValor(i + 1, "--eval-population"));
+      i++;
     } else if (arg.trim() === "") {
       // Ignora huecos accidentales.
     } else {
@@ -130,12 +201,23 @@ export function parseArgs(argv: string[]): OpcionesTrain {
       throw new Error('Valor inválido para --out: vacío. Usa --help para ver el uso.');
     }
   }
-  return { algorithm, game, iterations, seed, out, help };
+  return { algorithm, game, iterations, seed, out, help, population, evalPopulation };
 }
 
-/** Hash simple (djb2, hex 8) de "algorithm|game|iterations|seed". */
-export function hashConfig(algorithm: string, game: string, iterations: number, seed: number): string {
-  const texto = `${algorithm}|${game}|${iterations}|${seed}`;
+/** Hash simple (djb2, hex 8) de "algorithm|game|iterations|seed[|pop:ids]".
+ * Sin populationIds el hash es el de siempre (compat con checkpoints P4/P5). */
+export function hashConfig(
+  algorithm: string,
+  game: string,
+  iterations: number,
+  seed: number,
+  populationIds?: string[],
+): string {
+  const base = `${algorithm}|${game}|${iterations}|${seed}`;
+  const texto =
+    populationIds !== undefined && populationIds.length > 0
+      ? `${base}|pop:${populationIds.join(",")}`
+      : base;
   let h = 5381;
   for (let i = 0; i < texto.length; i++) {
     h = ((h << 5) + h + texto.charCodeAt(i)) >>> 0;
@@ -218,6 +300,16 @@ function main(): void {
     console.log(TEXTO_USO);
     return;
   }
+  // P6: la población eval debe ser disjunta de train (throw → error claro + exit 1).
+  if (opts.population !== undefined && opts.evalPopulation !== undefined) {
+    try {
+      validateDisjoint(opts.population, opts.evalPopulation);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : err);
+      process.exitCode = 1;
+      return;
+    }
+  }
   const modulo = opts.game === "leduc" ? moduloLeduc : moduloKuhn;
   let juego: CFRGame;
   if (opts.game === "holdem-hu-preflop") {
@@ -238,10 +330,33 @@ function main(): void {
       return;
     }
   }
-  const resultado = trainCFR({ game: juego, iterations: opts.iterations, seed: opts.seed, algorithm: opts.algorithm });
+  const poblacion: PopulationConfig | undefined = opts.population;
+  const idsTrain: string[] =
+    poblacion !== undefined ? poblacion.members.map((m) => m.id) : [];
+  const idsEval: string[] =
+    poblacion !== undefined && opts.evalPopulation !== undefined
+      ? opts.evalPopulation.members.map((m) => m.id)
+      : [];
+  const resultado =
+    poblacion !== undefined
+      ? trainVsPopulation({
+          game: juego,
+          iterations: opts.iterations,
+          seed: opts.seed,
+          algorithm: opts.algorithm,
+          population: poblacion,
+          heroSeats: "alternate",
+        })
+      : trainCFR({ game: juego, iterations: opts.iterations, seed: opts.seed, algorithm: opts.algorithm });
+  // Solo existe en el camino con población (PopTrainResult).
+  const conteos: Record<string, number> | undefined =
+    poblacion !== undefined ? (resultado as PopTrainResult).opponentCounts : undefined;
   const media = strategyMap(resultado);
   const expl = exploitability(juego, media);
-  const configHash = hashConfig(opts.algorithm, opts.game, opts.iterations, opts.seed);
+  const configHash =
+    idsTrain.length > 0 || idsEval.length > 0
+      ? hashConfig(opts.algorithm, opts.game, opts.iterations, opts.seed, [...idsTrain, ...idsEval])
+      : hashConfig(opts.algorithm, opts.game, opts.iterations, opts.seed);
   const cp = toCheckpoint(
       versionDe(opts.out),
       opts.game,
@@ -251,6 +366,7 @@ function main(): void {
       expl,
       configHash,
       opts.algorithm,
+      poblacion !== undefined ? { train: idsTrain, eval: idsEval } : undefined,
     );
   try {
     saveCheckpoint(opts.out, cp);
@@ -263,6 +379,11 @@ function main(): void {
   console.log(`juego: ${opts.game}`);
   console.log(`iteraciones: ${opts.iterations}`);
   console.log(`exploitability: ${expl}`);
+  if (conteos !== undefined) {
+    console.log(`population train: ${idsTrain.join(",")}`);
+    console.log(`population eval: ${idsEval.join(",")}`);
+    console.log(`opponentCounts: ${JSON.stringify(conteos)}`);
+  }
   console.log(`out: ${opts.out}`);
 }
 

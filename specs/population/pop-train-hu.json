@@ -1,0 +1,1 @@
+{"members":[{"id":"self","kind":"self","weight":0.5},{"id":"uni-train","kind":"uniform","weight":0.2},{"id":"v2","kind":"checkpoint","weight":0.3,"checkpointPath":"checkpoints/hu-cfrplus-v2.json"}]}

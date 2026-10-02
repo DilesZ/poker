@@ -16,6 +16,8 @@ export interface CfrCheckpoint {
   metrics: { exploitability: number };
   timestamp: string;
   configHash: string;
+  /** Ids de población train/eval (P6). Opcional; ausente en checkpoints antiguos. */
+  population?: { train: string[]; eval: string[] };
 }
 
 /** Extrae un vector numérico del nodo (r = regretSum, s = strategySum). */
@@ -41,6 +43,7 @@ export function toCheckpoint(
   expl: number,
   configHash: string,
   algorithm: "cfr" | "cfr+" = "cfr",
+  population?: { train: string[]; eval: string[] },
 ): CfrCheckpoint {
   const registro: Record<string, { actions: string[]; r: number[]; s: number[] }> = {};
   for (const [clave, nodo] of nodes) {
@@ -60,6 +63,9 @@ export function toCheckpoint(
     metrics: { exploitability: expl },
     timestamp: new Date().toISOString(),
     configHash,
+    ...(population !== undefined
+      ? { population: { train: [...population.train], eval: [...population.eval] } }
+      : {}),
   };
 }
 
@@ -102,6 +108,16 @@ export function loadCheckpoint(path: string): CfrCheckpoint {
   }
   const metricas: unknown = datos["metrics"];
   const nodos: unknown = datos["nodes"];
+  const poblacion: unknown = datos["population"];
+  const esListaIds = (v: unknown): v is string[] =>
+    Array.isArray(v) && v.every((x): x is string => typeof x === "string");
+  // P6: `population` es opcional (checkpoints antiguos no la traen); si viene
+  // debe tener forma { train: string[], eval: string[] }.
+  const poblacionValida =
+    poblacion === undefined ||
+    (esRegistro(poblacion) &&
+      esListaIds(poblacion["train"]) &&
+      esListaIds(poblacion["eval"]));
   const valido =
     typeof datos["version"] === "string" &&
     (datos["algorithm"] === "cfr" || datos["algorithm"] === "cfr+") &&
@@ -112,7 +128,8 @@ export function loadCheckpoint(path: string): CfrCheckpoint {
     esRegistro(metricas) &&
     typeof metricas["exploitability"] === "number" &&
     typeof datos["timestamp"] === "string" &&
-    typeof datos["configHash"] === "string";
+    typeof datos["configHash"] === "string" &&
+    poblacionValida;
   if (!valido) {
     throw new Error(`Checkpoint inválido (campos ausentes o algorithm ∉ {cfr,cfr+}): "${path}".`);
   }
@@ -128,5 +145,13 @@ export function loadCheckpoint(path: string): CfrCheckpoint {
     metrics: { exploitability: metricasReg["exploitability"] as number },
     timestamp: datos["timestamp"] as string,
     configHash: datos["configHash"] as string,
+    ...(poblacion !== undefined
+      ? {
+          population: {
+            train: [...((poblacion as Record<string, unknown>)["train"] as string[])],
+            eval: [...((poblacion as Record<string, unknown>)["eval"] as string[])],
+          },
+        }
+      : {}),
   };
 }
