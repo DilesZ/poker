@@ -8,7 +8,7 @@ import type { RegretNode } from "./node";
 /** Checkpoint CFR serializable a JSON. */
 export interface CfrCheckpoint {
   version: string;
-  algorithm: "cfr";
+  algorithm: "cfr" | "cfr+";
   game: string;
   seed: number;
   iterations: number;
@@ -40,6 +40,7 @@ export function toCheckpoint(
   nodes: Map<string, RegretNode>,
   expl: number,
   configHash: string,
+  algorithm: "cfr" | "cfr+" = "cfr",
 ): CfrCheckpoint {
   const registro: Record<string, { actions: string[]; r: number[]; s: number[] }> = {};
   for (const [clave, nodo] of nodes) {
@@ -51,7 +52,7 @@ export function toCheckpoint(
   }
   return {
     version,
-    algorithm: "cfr",
+    algorithm,
     game,
     seed,
     iterations,
@@ -103,7 +104,7 @@ export function loadCheckpoint(path: string): CfrCheckpoint {
   const nodos: unknown = datos["nodes"];
   const valido =
     typeof datos["version"] === "string" &&
-    datos["algorithm"] === "cfr" &&
+    (datos["algorithm"] === "cfr" || datos["algorithm"] === "cfr+") &&
     typeof datos["game"] === "string" &&
     typeof datos["seed"] === "number" &&
     typeof datos["iterations"] === "number" &&
@@ -113,13 +114,13 @@ export function loadCheckpoint(path: string): CfrCheckpoint {
     typeof datos["timestamp"] === "string" &&
     typeof datos["configHash"] === "string";
   if (!valido) {
-    throw new Error(`Checkpoint inválido (campos ausentes o algorithm ≠ "cfr"): "${path}".`);
+    throw new Error(`Checkpoint inválido (campos ausentes o algorithm ∉ {cfr,cfr+}): "${path}".`);
   }
   // Todos los campos validados arriba: se reconstruye sin casts inseguros.
   const metricasReg = metricas as Record<string, unknown>;
   return {
     version: datos["version"] as string,
-    algorithm: "cfr",
+    algorithm: datos["algorithm"] as "cfr" | "cfr+",
     game: datos["game"] as string,
     seed: datos["seed"] as number,
     iterations: datos["iterations"] as number,

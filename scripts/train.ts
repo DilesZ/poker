@@ -1,6 +1,6 @@
-// scripts/train.ts — CLI de entrenamiento CFR tabular (P4).
+// scripts/train.ts — CLI de entrenamiento CFR tabular (P4 vanilla + P5 CFR+).
 // Uso: npm run train -- --algorithm cfr --game kuhn --iterations 50000 --seed 12345 --out checkpoints/kuhn-cfr-v1.json
-// Solo "cfr" en P4 (cfr+ es P5). Importa juegos por ruta relativa (sin alias "@" en runtime).
+// Acepta --algorithm cfr|cfr+. Importa juegos por ruta relativa (sin alias "@" en runtime).
 import * as ruta from "node:path";
 import { exploitability } from "../lib/cfr/exploit";
 import { saveCheckpoint, toCheckpoint } from "../lib/cfr/checkpoint";
@@ -9,8 +9,10 @@ import type { CFRGame } from "../lib/cfr/game";
 import * as moduloKuhn from "../lib/games/kuhn";
 import * as moduloLeduc from "../lib/games/leduc";
 
+export type AlgoritmoTrain = "cfr" | "cfr+";
+
 export interface OpcionesTrain {
-  algorithm: string;
+  algorithm: AlgoritmoTrain;
   game: string;
   iterations: number;
   seed: number;
@@ -22,7 +24,7 @@ export const TEXTO_USO: string =
   "Uso: npm run train -- [opciones]\n" +
   "\n" +
   "Opciones:\n" +
-  "  --algorithm <id>  algoritmo (defecto: cfr; solo cfr en P4)\n" +
+  "  --algorithm <id>  algoritmo: cfr|cfr+ (defecto: cfr)\n" +
   "  --game <id>       juego: kuhn|leduc (defecto: kuhn)\n" +
   "  --iterations <n>  nº de iteraciones, entero > 0 (defecto: 50000)\n" +
   "  --seed <n>        semilla RNG, entero >= 0 (defecto: 12345)\n" +
@@ -48,9 +50,17 @@ function parseSemilla(texto: string, flag: string): number {
   return n;
 }
 
+/** Valida el flag --algorithm (cfr|cfr+). Lanza Error en español si es otro. */
+function parseAlgoritmo(texto: string): AlgoritmoTrain {
+  if (texto !== "cfr" && texto !== "cfr+") {
+    throw new Error(`Algoritmo desconocido: "${texto}". Usa --algorithm cfr|cfr+.`);
+  }
+  return texto;
+}
+
 /** Parsea argv (sin node ni script). Lanza Error en español si algo es inválido. */
 export function parseArgs(argv: string[]): OpcionesTrain {
-  let algorithm = "cfr";
+  let algorithm: AlgoritmoTrain = "cfr";
   let game = "kuhn";
   let iterations = 50000;
   let seed = 12345;
@@ -70,9 +80,9 @@ export function parseArgs(argv: string[]): OpcionesTrain {
     if (arg === "--help" || arg === "-h") {
       help = true;
     } else if (arg.startsWith("--algorithm=")) {
-      algorithm = arg.slice("--algorithm=".length);
+      algorithm = parseAlgoritmo(arg.slice("--algorithm=".length));
     } else if (arg === "--algorithm") {
-      algorithm = tomarValor(i + 1, "--algorithm");
+      algorithm = parseAlgoritmo(tomarValor(i + 1, "--algorithm"));
       i++;
     } else if (arg.startsWith("--game=")) {
       game = arg.slice("--game=".length);
@@ -102,8 +112,8 @@ export function parseArgs(argv: string[]): OpcionesTrain {
   }
 
   if (!help) {
-    if (algorithm !== "cfr") {
-      throw new Error(`Algoritmo "${algorithm}" no disponible en P4 (P5 pendiente). Usa --algorithm cfr.`);
+    if (algorithm !== "cfr" && algorithm !== "cfr+") {
+      throw new Error(`Algoritmo desconocido: "${algorithm}". Usa --algorithm cfr|cfr+.`);
     }
     if (game !== "kuhn" && game !== "leduc") {
       throw new Error(`Juego desconocido: "${game}". Usa --game kuhn|leduc.`);
@@ -215,19 +225,20 @@ function main(): void {
     process.exitCode = 1;
     return;
   }
-  const resultado = trainCFR({ game: juego, iterations: opts.iterations, seed: opts.seed });
+  const resultado = trainCFR({ game: juego, iterations: opts.iterations, seed: opts.seed, algorithm: opts.algorithm });
   const media = strategyMap(resultado);
   const expl = exploitability(juego, media);
   const configHash = hashConfig(opts.algorithm, opts.game, opts.iterations, opts.seed);
   const cp = toCheckpoint(
-    versionDe(opts.out),
-    opts.game,
-    opts.seed,
-    opts.iterations,
-    resultado.nodes,
-    expl,
-    configHash,
-  );
+      versionDe(opts.out),
+      opts.game,
+      opts.seed,
+      opts.iterations,
+      resultado.nodes,
+      expl,
+      configHash,
+      opts.algorithm,
+    );
   try {
     saveCheckpoint(opts.out, cp);
   } catch (err) {
