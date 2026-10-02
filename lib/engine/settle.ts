@@ -132,6 +132,7 @@ export function advanceStreet(state: PokerState, rng: () => number): PokerState 
     minRaise: state.bb,
     lastAggressor: null,
     actingSeat: siguiente === undefined ? null : siguiente,
+    history: [...(state.history ?? []), `/${street}`],
   };
 }
 

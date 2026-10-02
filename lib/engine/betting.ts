@@ -219,6 +219,8 @@ export function applyAction(state: PokerState, seat: number, action: EngineActio
   const recalcularBote = (): void => {
     siguiente.pot = siguiente.players.reduce((acc, p) => acc + p.betHand, 0);
   };
+  // Apuesta en calle antes de resolver (para tokens de historial público).
+  const apuestaCalleAntes = heroe.betStreet;
 
   switch (action.type) {
     case "fold": {
@@ -326,6 +328,27 @@ export function applyAction(state: PokerState, seat: number, action: EngineActio
       throw new Error(`Acción desconocida: ${JSON.stringify(exhaustivo)}.`);
     }
   }
+
+  // Historial público: token según la acción resuelta (no muta la entrada).
+  let token: string;
+  if (action.type === "fold") {
+    token = "f";
+  } else if (action.type === "check") {
+    token = "x";
+  } else if (action.type === "call") {
+    token = `c${heroe.betStreet - apuestaCalleAntes}`;
+  } else if (action.type === "bet") {
+    token = `b${heroe.betStreet - apuestaCalleAntes}`;
+  } else if (action.type === "raise") {
+    token = `r${siguiente.currentBet}`;
+  } else if (action.type === "allin") {
+    // allin: apuesta final en calle tras pagar todo el stack.
+    token = `a${heroe.betStreet}`;
+  } else {
+    const exhaustivo: never = action;
+    throw new Error(`Acción desconocida: ${JSON.stringify(exhaustivo)}.`);
+  }
+  siguiente.history = [...(state.history ?? []), token];
 
   siguiente.actingSeat = avanzarTurno(siguiente, seat);
   return siguiente;
