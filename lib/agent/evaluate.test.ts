@@ -51,4 +51,15 @@ describe("agent/evaluate", () => {
     expect(r.brainDecisions).toBeGreaterThan(0);
     for (const v of Object.values(r.byPosition)) expect(Number.isFinite(v)).toBe(true);
   }, 20000);
+
+  it("4. mesa tight foldea más (menos showdown que mixto)", () => {
+    const mixto = runBrainEval(createBrain(), { hands: 200, seed: 99 });
+    const tight = runBrainEval(createBrain(), { hands: 200, seed: 99, field: "tight" });
+    expect(tight.hands).toBe(200);
+    expect(Number.isFinite(tight.bb100)).toBe(true);
+    // Rivales que foldean lo débil ante presión → menos showdowns.
+    // (Las manos duran más calles, así que el héroe decide igual o más veces.)
+    expect(tight.showdownPct).toBeLessThan(mixto.showdownPct);
+    expect(tight.brainDecisions).toBeGreaterThan(0);
+  }, 20000);
 });

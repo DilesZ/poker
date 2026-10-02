@@ -40,6 +40,8 @@ export async function POST(request: Request): Promise<Response> {
     if (hands > MAX_HANDS_EVAL) hands = MAX_HANDS_EVAL;
     const seedRaw = cuerpo?.["seed"];
     const seed = typeof seedRaw === "number" && Number.isFinite(seedRaw) ? Math.floor(seedRaw) : 42;
+    const fieldRaw = cuerpo?.["field"];
+    const field = fieldRaw === "tight" ? "tight" : "mixto";
 
     let mod: Record<string, unknown>;
     try {
@@ -57,7 +59,7 @@ export async function POST(request: Request): Promise<Response> {
     let resultado: unknown;
     try {
       const f = fn as (...args: unknown[]) => Promise<unknown>;
-      resultado = await f(brain, { hands, seed });
+      resultado = await f(brain, { hands, seed, field });
     } catch (e) {
       const ahoraErr = Date.now();
       const jobIdErr = `E-${ahoraErr.toString(36)}-${Math.floor(Math.random() * 1296).toString(36)}`;
@@ -142,7 +144,7 @@ export async function POST(request: Request): Promise<Response> {
 
     // Solo mide: NO modifica el cerebro.
     return Response.json(
-      { hands: handsHechas, bb100, sd, ci95, showdownPct, brainDecisions },
+      { hands: handsHechas, bb100, sd, ci95, showdownPct, brainDecisions, field },
       { headers: { "cache-control": "no-store" } },
     );
   } catch (e) {

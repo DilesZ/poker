@@ -12,6 +12,9 @@ export interface BrainEvalOpts {
   hands?: number;
   seed?: number;
   heroSeat?: number;
+  /** "mixto" (default): 5 heurísticas estándar. "tight": mesa que foldea
+   * (menos bingo, menos varianza, mide el filo real). */
+  field?: "mixto" | "tight";
 }
 
 export interface BrainEvalResult {
@@ -28,6 +31,30 @@ const POS_KEYS = ["BTN", "SB", "BB", "EP", "MP", "CO"] as const;
 
 function zeroByPos(): Record<string, number> {
   return { BTN: 0, SB: 0, BB: 0, EP: 0, MP: 0, CO: 0 };
+}
+
+function clip01(x: number): number {
+  if (!Number.isFinite(x)) return 0.5;
+  if (x < 0) return 0;
+  if (x > 1) return 1;
+  return x;
+}
+
+/** Estrategia por asiento rival: mixto clona el default; tight aprieta. */
+function estrategiasDeMesa(field: "mixto" | "tight") {
+  const base = cloneStrategy(DEFAULT_STRATEGY);
+  if (field !== "tight") {
+    return Array.from({ length: 6 }, () => cloneStrategy(base));
+  }
+  return Array.from({ length: 6 }, () => {
+    const s = cloneStrategy(base);
+    for (const pos of Object.keys(s.pushFoldThresholds) as (keyof typeof s.pushFoldThresholds)[]) {
+      s.pushFoldThresholds[pos] = clip01((s.pushFoldThresholds[pos] ?? 0.55) + 0.08);
+    }
+    s.tightness = 0.8;
+    s.aggression = 0.3;
+    return s;
+  });
 }
 
 /**
@@ -52,6 +79,10 @@ export function runBrainEval(brain: Brain, opts: BrainEvalOpts = {}): BrainEvalR
   if (!Number.isFinite(seed)) throw new Error("seed debe ser finito");
 
   const working = cloneStrategy(DEFAULT_STRATEGY);
+  // Mesa tight: rivales que sí foldean (umbrales +0.08, poco agresivos).
+  // Baja el showdown% (~95%→~60%) y la varianza: el filo se mide, no el bingo.
+  const field = opts.field === "tight" ? "tight" : "mixto";
+  const workings = estrategiasDeMesa(field);
   const rng = mulberry32(seed >>> 0);
   const originalRandom = Math.random;
   Math.random = rng;
@@ -187,7 +218,16 @@ export function runBrainEval(brain: Brain, opts: BrainEvalOpts = {}): BrainEvalR
             }
 
             const pos = seatPos[p.id] ?? positionOfSeat(p.id, button, NUM_PLAYERS);
-            const act = decideFor(p.id, strength, toCall, state.pot, p.stack, BB, pos, working);
+            const rival = workings[p.id] ?? workings[0] ?? working;
+            let act = decideFor(p.id, strength, toCall, state.pot, p.stack, BB, pos, rival);
+            // Mesa tight: el rival foldea lo débil ante presión (>1BB). Los
+            // umbrales de la estrategia solo actúan <10bb, así que sin esta
+            // regla el field "tight" sería idéntico al mixto (bingo 95%).
+            if (field === "tight" && toCall > BB && strength < 0.45) {
+              if (act.action === "call" || act.action === "bet") {
+                act = { action: "fold" };
+              }
+            }
             if (act.action === "fold") {
               p.folded = true;
             } else if (act.action === "check") {
