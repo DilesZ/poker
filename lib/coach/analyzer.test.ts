@@ -1,6 +1,7 @@
 // Tests del analizador del coach. En español. Sin dependencias salvo vitest.
 import { describe, expect, it } from "vitest";
 import { analyzeHistories } from "./analyzer";
+import type { Card, Rank, Suit } from "../poker/types";
 import type { CoachActionType, CoachStreet, HandAction, HandRecord, PosLabel } from "./types";
 
 function acc(
@@ -35,6 +36,34 @@ function mano(
 function manoEpLoose(id: string, pos: PosLabel): HandRecord {
   return mano(id, pos, [acc("preflop", 1, "raise", 60, 80), acc("preflop", 0, "call", 60, 140)], false);
 }
+
+function carta(rank: Rank, suit: Suit): Card {
+  return { rank, suit };
+}
+
+function manoCon(
+  id: string,
+  posHeroe: PosLabel,
+  acciones: HandAction[],
+  showdown: boolean,
+  heroHole?: Card[],
+  board?: Card[],
+  bbWon = 0,
+): HandRecord {
+  return {
+    id,
+    ts: 1,
+    heroSeat: 0,
+    button: 1,
+    positions: { 0: posHeroe, 1: "BTN" },
+    actions: acciones,
+    result: { bbWon, showdown },
+    heroHole,
+    board,
+  };
+}
+
+const NUEVOS = ["OVERFOLD", "MISSED_VALUE", "BAD_SIZING", "BAD_PREFLOP", "OVERAGGRESSION"];
 
 describe("analyzeHistories", () => {
   it("overall exacto en 4 manos sintéticas", () => {
@@ -266,5 +295,287 @@ describe("analyzeHistories", () => {
     for (const pos of ["SB", "BB", "UTG", "MP", "CO", "BTN"] as PosLabel[]) {
       expect(r.byPosition[pos].hands).toBe(0);
     }
+  });
+
+  it("OVERFOLD al 80% con 20 spots", () => {
+    const manos: HandRecord[] = [];
+    for (let i = 0; i < 16; i++) {
+      manos.push(
+        mano(
+          `of-fold-${i}`,
+          "CO",
+          [
+            acc("preflop", 0, "call", 40, 60),
+            acc("flop", 1, "bet", 50, 110),
+            acc("flop", 0, "fold", 0, 110),
+          ],
+          false,
+        ),
+      );
+    }
+    for (let i = 0; i < 4; i++) {
+      manos.push(
+        mano(
+          `of-call-${i}`,
+          "CO",
+          [
+            acc("preflop", 0, "call", 40, 60),
+            acc("flop", 1, "bet", 50, 110),
+            acc("flop", 0, "call", 50, 160),
+          ],
+          false,
+        ),
+      );
+    }
+    const r = analyzeHistories(manos);
+    const flag = r.flags.find((f) => f.kind === "OVERFOLD");
+    expect(flag).toBeDefined();
+    expect(flag?.id).toBe("OVERFOLD");
+    expect(flag?.detail).toContain("n=20");
+    expect(flag?.detail).toContain("%");
+    expect(flag?.evidenceHandIds.length).toBeGreaterThan(0);
+    expect(flag?.evidenceHandIds.length).toBeLessThanOrEqual(5);
+    expect(flag?.source.length).toBeGreaterThan(0);
+  });
+
+  it("MISSED_VALUE con 3 sets sin agresión turn/river y NO salta si apostó", () => {
+    const hole = [carta(7, "♠"), carta(7, "♥")];
+    const mesa = [carta(7, "♦"), carta(13, "♣"), carta(2, "♠"), carta(5, "♥"), carta(9, "♦")];
+    const sinAgro: HandRecord[] = [0, 1, 2].map((i) =>
+      manoCon(
+        `mv-${i}`,
+        "CO",
+        [
+          acc("preflop", 0, "call", 40, 60),
+          acc("flop", 0, "check", 0, 60),
+          acc("turn", 0, "check", 0, 60),
+          acc("river", 0, "check", 0, 60),
+        ],
+        true,
+        [...hole],
+        [...mesa],
+      ),
+    );
+    const r = analyzeHistories(sinAgro);
+    const flag = r.flags.find((f) => f.kind === "MISSED_VALUE");
+    expect(flag).toBeDefined();
+    expect(flag?.id).toBe("MISSED_VALUE");
+    expect(flag?.detail).toContain("3");
+    expect(flag?.evidenceHandIds.length).toBe(3);
+    // Con apuesta en turn sí hay valor extraído: no cuenta como caso.
+    const conAgro: HandRecord[] = [0, 1, 2].map((i) =>
+      manoCon(
+        `mvb-${i}`,
+        "CO",
+        [
+          acc("preflop", 0, "call", 40, 60),
+          acc("flop", 0, "check", 0, 60),
+          acc("turn", 0, "bet", 60, 120),
+          acc("river", 0, "check", 0, 120),
+        ],
+        true,
+        [...hole],
+        [...mesa],
+      ),
+    );
+    const r2 = analyzeHistories(conAgro);
+    expect(r2.flags.find((f) => f.kind === "MISSED_VALUE")).toBeUndefined();
+  });
+
+  it("BAD_SIZING 50% minbets con 20 apuestas", () => {
+    const manos: HandRecord[] = [];
+    for (let i = 0; i < 10; i++) {
+      manos.push(
+        mano(
+          `bs-min-${i}`,
+          "CO",
+          [acc("preflop", 0, "call", 40, 60), acc("flop", 0, "bet", 10, 210)],
+          false,
+        ),
+      );
+    }
+    for (let i = 0; i < 10; i++) {
+      manos.push(
+        mano(
+          `bs-ok-${i}`,
+          "CO",
+          [acc("preflop", 0, "call", 40, 60), acc("flop", 0, "bet", 60, 160)],
+          false,
+        ),
+      );
+    }
+    const r = analyzeHistories(manos);
+    const flag = r.flags.find((f) => f.kind === "BAD_SIZING");
+    expect(flag).toBeDefined();
+    expect(flag?.id).toBe("BAD_SIZING");
+    expect(flag?.detail).toContain("%");
+    expect(flag?.detail).toContain("bote");
+    expect(flag?.evidenceHandIds.length).toBeGreaterThan(0);
+    expect(flag?.evidenceHandIds.length).toBeLessThanOrEqual(5);
+  });
+
+  it("BAD_PREFLOP tier5 VPIP 50% con 20", () => {
+    const basura = [carta(7, "♦"), carta(2, "♣")];
+    const manos: HandRecord[] = [];
+    for (let i = 0; i < 10; i++) {
+      manos.push(
+        manoCon(
+          `bp-call-${i}`,
+          "CO",
+          [acc("preflop", 1, "raise", 60, 80), acc("preflop", 0, "call", 60, 140)],
+          false,
+          [...basura],
+          [],
+        ),
+      );
+    }
+    for (let i = 0; i < 10; i++) {
+      manos.push(
+        manoCon(
+          `bp-fold-${i}`,
+          "CO",
+          [acc("preflop", 1, "raise", 60, 80), acc("preflop", 0, "fold", 0, 80)],
+          false,
+          [...basura],
+          [],
+        ),
+      );
+    }
+    const r = analyzeHistories(manos);
+    const flag = r.flags.find((f) => f.kind === "BAD_PREFLOP");
+    expect(flag).toBeDefined();
+    expect(flag?.id).toBe("BAD_PREFLOP");
+    expect(flag?.detail).toContain("n=20");
+    expect(flag?.detail).toContain("%");
+    expect(flag?.evidenceHandIds.length).toBeGreaterThan(0);
+    expect(flag?.evidenceHandIds.length).toBeLessThanOrEqual(5);
+  });
+
+  it("OVERAGGRESSION aggro 6 y bbWon<0 con 20", () => {
+    const manos: HandRecord[] = [];
+    for (let i = 0; i < 12; i++) {
+      manos.push(
+        manoCon(
+          `oa-bet-${i}`,
+          "CO",
+          [acc("preflop", 0, "call", 40, 60), acc("flop", 0, "bet", 50, 110)],
+          false,
+          undefined,
+          undefined,
+          -1,
+        ),
+      );
+    }
+    for (let i = 0; i < 2; i++) {
+      manos.push(
+        manoCon(
+          `oa-call-${i}`,
+          "CO",
+          [
+            acc("preflop", 0, "call", 40, 60),
+            acc("flop", 1, "bet", 50, 110),
+            acc("flop", 0, "call", 50, 160),
+          ],
+          false,
+          undefined,
+          undefined,
+          -1,
+        ),
+      );
+    }
+    for (let i = 0; i < 6; i++) {
+      manos.push(
+        manoCon(
+          `oa-check-${i}`,
+          "CO",
+          [acc("preflop", 0, "call", 40, 60), acc("flop", 0, "check", 0, 60)],
+          false,
+          undefined,
+          undefined,
+          -1,
+        ),
+      );
+    }
+    const r = analyzeHistories(manos);
+    expect(r.overall.aggro).toBeCloseTo(6, 10);
+    const flag = r.flags.find((f) => f.kind === "OVERAGGRESSION");
+    expect(flag).toBeDefined();
+    expect(flag?.id).toBe("OVERAGGRESSION");
+    expect(flag?.detail).toContain("BB");
+    expect(flag?.evidenceHandIds.length).toBeGreaterThan(0);
+    expect(flag?.evidenceHandIds.length).toBeLessThanOrEqual(5);
+  });
+
+  it("vacío e insuficiente sin flags nuevos", () => {
+    const r0 = analyzeHistories([]);
+    for (const k of NUEVOS) {
+      expect(r0.flags.find((f) => f.kind === k)).toBeUndefined();
+    }
+    // Insuficiente OVERFOLD: 5 folds (denominador <15) aunque sea 100%.
+    const pocosFolds: HandRecord[] = Array.from({ length: 5 }, (_, i) =>
+      mano(
+        `ins-fold-${i}`,
+        "CO",
+        [
+          acc("preflop", 0, "call", 40, 60),
+          acc("flop", 1, "bet", 50, 110),
+          acc("flop", 0, "fold", 0, 110),
+        ],
+        false,
+      ),
+    );
+    const r1 = analyzeHistories(pocosFolds);
+    for (const k of NUEVOS) {
+      expect(r1.flags.find((f) => f.kind === k)).toBeUndefined();
+    }
+    // Insuficiente MISSED_VALUE: solo 2 casos (<3).
+    const hole = [carta(7, "♠"), carta(7, "♥")];
+    const mesa = [carta(7, "♦"), carta(13, "♣"), carta(2, "♠"), carta(5, "♥"), carta(9, "♦")];
+    const dosCasos: HandRecord[] = [0, 1].map((i) =>
+      manoCon(
+        `ins-mv-${i}`,
+        "CO",
+        [acc("preflop", 0, "call", 40, 60), acc("turn", 0, "check", 0, 60)],
+        true,
+        [...hole],
+        [...mesa],
+      ),
+    );
+    const r2 = analyzeHistories(dosCasos);
+    expect(r2.flags.find((f) => f.kind === "MISSED_VALUE")).toBeUndefined();
+    // Insuficiente BAD_SIZING: 5 extremas (<15).
+    const pocasApuestas: HandRecord[] = Array.from({ length: 5 }, (_, i) =>
+      mano(`ins-bs-${i}`, "CO", [acc("flop", 0, "bet", 10, 210)], false),
+    );
+    const r3 = analyzeHistories(pocasApuestas);
+    expect(r3.flags.find((f) => f.kind === "BAD_SIZING")).toBeUndefined();
+    // Insuficiente BAD_PREFLOP: 5 débiles (<15).
+    const basura = [carta(7, "♦"), carta(2, "♣")];
+    const pocasDebiles: HandRecord[] = Array.from({ length: 5 }, (_, i) =>
+      manoCon(
+        `ins-bp-${i}`,
+        "CO",
+        [acc("preflop", 1, "raise", 60, 80), acc("preflop", 0, "call", 60, 140)],
+        false,
+        [...basura],
+        [],
+      ),
+    );
+    const r4 = analyzeHistories(pocasDebiles);
+    expect(r4.flags.find((f) => f.kind === "BAD_PREFLOP")).toBeUndefined();
+    // Insuficiente OVERAGGRESSION: aggro alto y perdiendo pero n=5 (<20).
+    const pocasAggro: HandRecord[] = Array.from({ length: 5 }, (_, i) =>
+      manoCon(
+        `ins-oa-${i}`,
+        "CO",
+        [acc("preflop", 0, "call", 40, 60), acc("flop", 0, "bet", 50, 110)],
+        false,
+        undefined,
+        undefined,
+        -1,
+      ),
+    );
+    const r5 = analyzeHistories(pocasAggro);
+    expect(r5.flags.find((f) => f.kind === "OVERAGGRESSION")).toBeUndefined();
   });
 });

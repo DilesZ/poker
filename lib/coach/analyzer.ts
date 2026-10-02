@@ -1,5 +1,7 @@
 // Agregador del coach: resume historiales del héroe y emite flags solo con muestra suficiente.
-// Sin dependencias. Todo en español. TypeScript estricto.
+// Dependencias: referencias + baselines/strength (tiers/categorías) + tipos. Todo en español. TypeScript estricto.
+import { madeCategory, preflopTier } from "../baselines/strength";
+import type { Card } from "../poker/types";
 import { REFERENCES } from "./references";
 import type { CoachFlag, CoachReport, HandAction, HandRecord, PosLabel } from "./types";
 
@@ -99,6 +101,64 @@ function heroeFoldeoPrimeraPreflop(h: HandRecord): boolean {
   return false;
 }
 
+// --- Ayudas F29 (Kinds v2): validación de cartas y agresiones por calle ---
+
+const PALOS_VALIDOS: ReadonlySet<string> = new Set(["♠", "♥", "♦", "♣"]);
+
+function esCartaValida(c: unknown): c is Card {
+  if (typeof c !== "object" || c === null) return false;
+  const o = c as { rank?: unknown; suit?: unknown };
+  return (
+    typeof o.rank === "number" &&
+    Number.isInteger(o.rank) &&
+    o.rank >= 2 &&
+    o.rank <= 14 &&
+    typeof o.suit === "string" &&
+    PALOS_VALIDOS.has(o.suit)
+  );
+}
+
+// heroHole válido: 2 cartas con rango 2-14 y palo válido. Si no, null (se salta la mano).
+function heroHoleValido(h: HandRecord): [Card, Card] | null {
+  const hole = h.heroHole;
+  if (!Array.isArray(hole) || hole.length !== 2) return null;
+  const a = hole[0];
+  const b = hole[1];
+  if (!esCartaValida(a) || !esCartaValida(b)) return null;
+  return [a, b];
+}
+
+// Board válido: array de cartas todas válidas. Null si falta o hay alguna inválida.
+function boardValido(h: HandRecord): Card[] | null {
+  const b = h.board;
+  if (!Array.isArray(b)) return null;
+  for (const c of b) {
+    if (!esCartaValida(c)) return null;
+  }
+  return b as Card[];
+}
+
+  // Agresión del héroe en una calle concreta: bet/raise/allin (allin cuenta).
+  function heroeAgredioEn(h: HandRecord, calle: "turn" | "river"): boolean {
+    return h.actions.some(
+      (a) =>
+        a.street === calle &&
+        a.seat === h.heroSeat &&
+        (a.action === "bet" || a.action === "raise" || a.action === "allin"),
+    );
+  }
+
+  // Agresión del héroe en turn/river: bet/raise/allin (allin cuenta como agresión).
+  // Apuestas postflop del héroe por mano (b+r, mismo cómputo que el aggro global).
+function apuestasPostflopPorMano(h: HandRecord): number {
+  let n = 0;
+  for (const a of h.actions) {
+    if (a.street === "preflop" || a.seat !== h.heroSeat) continue;
+    if (a.action === "bet" || a.action === "raise") n += 1;
+  }
+  return n;
+}
+
 export function analyzeHistories(hands: HandRecord[]): CoachReport {
   const n = hands.length;
 
@@ -196,6 +256,171 @@ export function analyzeHistories(hands: HandRecord[]): CoachReport {
         detail: `Fold ${(tasaFold * 100).toFixed(1)}% en BB ante open con n=${oppsBB.length} oportunidades; referencia ${(bajoFold * 100).toFixed(1)}%–${(altoFold * 100).toFixed(1)}%.`,
         evidenceHandIds: oppsBB.filter(heroeFoldeoPrimeraPreflop).slice(0, 5).map((h) => h.id),
         source: fuenteFold,
+      });
+    }
+  }
+
+  // --- Flag 4 (F29): OVERFOLD postflop ante agresión ---
+  // Spot = acción postflop del héroe que sea fold o call (aproxima "ante
+  // agresión": se excluyen checks; solo folds+calls cuentan como denominator).
+  const refOverfold = REFERENCES.find((r) => r.metric === "overfold_postflop");
+  const fuenteOverfold = refOverfold?.source ?? FUENTE_POR_DEFECTO;
+  let foldsPostflop = 0;
+  let callsPostflopFold = 0;
+  const idsFoldsPostflop: string[] = [];
+  for (const h of hands) {
+    let foldEnMano = false;
+    for (const a of h.actions) {
+      if (a.street === "preflop" || a.seat !== h.heroSeat) continue;
+      if (a.action === "fold") {
+        foldsPostflop += 1;
+        foldEnMano = true;
+      } else if (a.action === "call") {
+        callsPostflopFold += 1;
+      }
+    }
+    if (foldEnMano) idsFoldsPostflop.push(h.id);
+  }
+  const denomOverfold = foldsPostflop + callsPostflopFold;
+  if (denomOverfold >= 15) {
+    const foldRate = foldsPostflop / denomOverfold;
+    if (foldRate > 0.75) {
+      flags.push({
+        id: "OVERFOLD",
+        kind: "OVERFOLD",
+        title: "Foldeas demasiado postflop ante agresión",
+        detail: `Fold ${(foldRate * 100).toFixed(1)}% postflop ante agresión con n=${denomOverfold} spots (${foldsPostflop} folds / ${callsPostflopFold} calls); referencia ≤75.0%.`,
+        evidenceHandIds: idsFoldsPostflop.slice(0, 5),
+        source: fuenteOverfold,
+      });
+    }
+  }
+
+  // --- Flag 5 (F29): MISSED_VALUE (trío+ sin apuesta en su calle) ---
+  // SIN lookahead: la fuerza se evalúa con el board DE ESA CALLE (turn =
+  // hole+4, river = hole+5), nunca con el board final para juzgar el turn.
+  // Caso = mano con showdown donde el héroe NO agredió ni en turn ni en
+  // river y TENÍA trío+ en alguna de esas calles (con su board).
+  const refMissed = REFERENCES.find((r) => r.metric === "missed_value");
+  const fuenteMissed = refMissed?.source ?? FUENTE_POR_DEFECTO;
+  const casosMissed: string[] = [];
+  for (const h of hands) {
+    if (!h.result.showdown) continue;
+    const hole = heroHoleValido(h);
+    const mesa = boardValido(h);
+    if (hole === null || mesa === null) continue;
+    if (heroeAgredioEn(h, "turn") || heroeAgredioEn(h, "river")) continue;
+    let maxCategoria = -1;
+    if (mesa.length >= 4) {
+      try {
+        maxCategoria = Math.max(maxCategoria, madeCategory([...hole, ...mesa.slice(0, 4)]));
+      } catch {
+        /* mano incompleta: se ignora */
+      }
+    }
+    if (mesa.length >= 5) {
+      try {
+        maxCategoria = Math.max(maxCategoria, madeCategory([...hole, ...mesa.slice(0, 5)]));
+      } catch {
+        /* mano incompleta: se ignora */
+      }
+    }
+    if (maxCategoria >= 3) casosMissed.push(h.id);
+  }
+  if (casosMissed.length >= 3) {
+    flags.push({
+      id: "MISSED_VALUE",
+      kind: "MISSED_VALUE",
+      title: "Dejas valor sin apostar con manos fuertes",
+      detail: `${casosMissed.length} casos con trío+ y showdown sin apuesta en turn ni river; referencia n≥3 casos (categoría ≥3 trío+).`,
+      evidenceHandIds: casosMissed.slice(0, 5),
+      source: fuenteMissed,
+    });
+  }
+
+  // --- Flag 6 (F29): BAD_SIZING (apuestas extremas) ---
+  const refSizing = REFERENCES.find((r) => r.metric === "bad_sizing");
+  const fuenteSizing = refSizing?.source ?? FUENTE_POR_DEFECTO;
+  let nApuestas = 0;
+  let nExtremas = 0;
+  const ejemplosExtremos: Array<{ id: string; sizing: number }> = [];
+  for (const h of hands) {
+    for (const a of h.actions) {
+      if (a.seat !== h.heroSeat) continue;
+      if (a.action !== "bet" && a.action !== "raise") continue;
+      const sizing = a.amount / Math.max(1, a.potAfter - a.amount);
+      nApuestas += 1;
+      if (sizing < 0.25 || sizing > 1.5) {
+        nExtremas += 1;
+        ejemplosExtremos.push({ id: h.id, sizing });
+      }
+    }
+  }
+  if (nApuestas >= 15 && nExtremas / nApuestas > 0.4) {
+    const pct = ((nExtremas / nApuestas) * 100).toFixed(1);
+    const ejemplos = ejemplosExtremos
+      .slice(0, 5)
+      .map((e) => `${e.id}: ${Math.round(e.sizing * 100)}% bote`)
+      .join(", ");
+    flags.push({
+      id: "BAD_SIZING",
+      kind: "BAD_SIZING",
+      title: "Tus tamaños de apuesta son extremos",
+      detail: `Apuestas extremas (<25% o >150% bote) ${pct}% (${nExtremas}/${nApuestas}) con n=${nApuestas} apuestas; ejemplos ${ejemplos}.`,
+      evidenceHandIds: ejemplosExtremos.slice(0, 5).map((e) => e.id),
+      source: fuenteSizing,
+    });
+  }
+
+  // --- Flag 7 (F29): BAD_PREFLOP (VPIP con tier 4-5) ---
+  const refPref = REFERENCES.find((r) => r.metric === "bad_preflop");
+  const fuentePref = refPref?.source ?? FUENTE_POR_DEFECTO;
+  const manosDebiles = hands.filter((h) => {
+    const hole = heroHoleValido(h);
+    if (hole === null) return false;
+    let tier = 0;
+    try {
+      tier = preflopTier(hole);
+    } catch {
+      return false;
+    }
+    return tier >= 4;
+  });
+  if (manosDebiles.length >= 15) {
+    const voluntariasDebiles = manosDebiles.filter(heroePusoVoluntarioPreflop);
+    const vpipDebil = voluntariasDebiles.length / manosDebiles.length;
+    if (vpipDebil > 0.4) {
+      flags.push({
+        id: "BAD_PREFLOP",
+        kind: "BAD_PREFLOP",
+        title: "Juegas demasiadas manos débiles preflop",
+        detail: `VPIP ${(vpipDebil * 100).toFixed(1)}% con tier 4-5 con n=${manosDebiles.length} manos débiles; referencia ≤40.0%.`,
+        evidenceHandIds: voluntariasDebiles.slice(0, 5).map((h) => h.id),
+        source: fuentePref,
+      });
+    }
+  }
+
+  // --- Flag 8 (F29): OVERAGGRESSION (aggro alto que pierde) ---
+  const refOveraggro = REFERENCES.find((r) => r.metric === "overaggro");
+  const fuenteOveraggro = refOveraggro?.source ?? FUENTE_POR_DEFECTO;
+  if (n >= 20 && aggro > 4.0) {
+    let bbTotal = 0;
+    for (const h of hands) bbTotal += h.result.bbWon;
+    if (bbTotal < 0) {
+      const ordenadas = [...hands].sort(
+        (x, y) => apuestasPostflopPorMano(y) - apuestasPostflopPorMano(x),
+      );
+      const conApuestas = ordenadas.filter((h) => apuestasPostflopPorMano(h) > 0);
+      const base = conApuestas.length > 0 ? conApuestas : ordenadas;
+      const top = base.slice(0, 5);
+      flags.push({
+        id: "OVERAGGRESSION",
+        kind: "OVERAGGRESSION",
+        title: "Tu agresión no está pagando",
+        detail: `tu agresión no está pagando: ${bbTotal.toFixed(1)} BB perdidos en ${n} manos con agresión postflop ${aggro.toFixed(2)}; referencia 1.0–3.0.`,
+        evidenceHandIds: top.map((h) => h.id),
+        source: fuenteOveraggro,
       });
     }
   }

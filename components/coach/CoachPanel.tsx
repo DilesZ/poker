@@ -14,6 +14,11 @@ const LECCION_POR_KIND: Record<FlagKind, string> = {
   VPIP_ALTO_EP: "Lección: Manos iniciales",
   PASIVO_POSTFLOP: "Lección: Pot odds",
   OVERFOLD_BB: "Lección: Posición",
+  OVERFOLD: "Lección: Pot odds",
+  MISSED_VALUE: "Lección: Manos iniciales",
+  BAD_SIZING: "Lección: Pot odds",
+  BAD_PREFLOP: "Lección: Manos iniciales",
+  OVERAGGRESSION: "Lección: Posición",
 };
 
 function pctText(ratio: number, n: number): string {
