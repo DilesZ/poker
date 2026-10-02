@@ -23,6 +23,8 @@ export interface Room {
   brain: Brain;
   /** Última lección del agente (diario). Se limpia al repartir mano nueva. */
   lesson?: string;
+  /** Versión de memoria global del agente (2 = con dream consolidation). */
+  agentMemoryVersion?: number;
 }
 
 /** clientId fijo del agente: siempre sentado en su asiento. */

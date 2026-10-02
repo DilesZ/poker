@@ -3,9 +3,18 @@
 // Toda la estrategia nace de dos sitios: priors por clave de situación y la reflexión
 // posterior a cada mano. Cero reglas fijas tipo "par > raise": ni handRankApprox
 // (ctx) ni las cartas deciden la acción, solo el aprendizaje acumulado.
+//
+// V2: estado rico 72 situaciones (calle/precio/stack/rivales), crédito total
+// a TODA la actionHistory con descuento 0.8^d y magnitud por bote, regret
+// contrafactual para tipos no usados, epsilon efectivo por visitas + bonus UCB.
 import { potOdds } from "../poker/game";
 import type { Street } from "../poker/types";
-import { claveDesdeContexto, claveSituacion, parsearAccion } from "./reflection";
+import {
+  claveDesdeContexto,
+  claveParaAccion,
+  claveSituacion,
+  parsearAccion,
+} from "./reflection";
 
 export interface Lesson {
   id: string;
@@ -15,6 +24,10 @@ export interface Lesson {
   change: string;
   handsPlayed: number;
   ts: number;
+  /** Magnitud del crédito V2 (0.5-1.5 según bote). */
+  magnitude?: number;
+  /** Nº de acciones acreditadas en la mano (crédito total). */
+  actionsCredited?: number;
 }
 
 export interface Brain {
@@ -62,8 +75,10 @@ export interface HandRecord {
   numRivales?: number;
 }
 
-const SUBIDA = 0.05;
-const BAJADA = 0.04;
+const STEP_WIN = 0.08;
+const STEP_LOSS = -0.06;
+const DESCUENTO = 0.8;
+const CONTRA_PESO = 0.15;
 const PRIOR_MIN = 0.05;
 const PRIOR_MAX = 0.95;
 const EPSILON_MIN = 0.1;
@@ -71,6 +86,8 @@ const EPSILON_DECAY = 0.98;
 const UMBRALES_EPSILON = [0.5, 0.3, 0.2, 0.1];
 const CALLES = ["preflop", "flop", "turn", "river"] as const;
 const CUBOS = ["toCall0", "hasPot"] as const;
+const PRECIOS = ["free", "cheap", "pricey"] as const;
+const STACKS = ["short", "mid", "deep"] as const;
 const TIPOS = ["fold", "check", "call", "raise", "allin"] as const;
 const RIVALES = ["HU", "multi"] as const;
 const MAX_LESSONS = 100;
@@ -96,6 +113,16 @@ export function createBrain(): Brain {
         }
       }
     }
+    // Claves ricas V2: calle/precio/stack/rivales (4*3*3*2=72 situaciones).
+    for (const precio of PRECIOS) {
+      for (const stack of STACKS) {
+        for (const rival of RIVALES) {
+          for (const tipo of TIPOS) {
+            priors[`${calle}/${precio}/${stack}/${rival}/${tipo}`] = 0.5;
+          }
+        }
+      }
+    }
   }
   return {
     handsPlayed: 0,
@@ -117,15 +144,19 @@ export function chooseBrainAction(brain: Brain, legal: BrainLegal, ctx: BrainCon
   if (candidatos.length === 1) return conTamano(candidatos[0] as BrainAction, legal);
 
   const clave = claveDesdeContexto(ctx);
+  const visits = brain.counts?.[clave] ?? 0;
+  // Exploración efectiva: decae con visitas, suelo 5%.
+  const effEps = Math.max(0.05, Math.min(brain.epsilon, 1 / Math.sqrt(1 + visits)));
 
   // Exploración: azar puro entre candidatos legales (el raise abre 0.5*pot).
-  if (Math.random() < brain.epsilon) return conTamano(elegirAzar(candidatos), legal);
+  if (Math.random() < effEps) return conTamano(elegirAzar(candidatos), legal);
 
-  // Explotación: mejor prior; con precio, el call compara su prior con las pot odds.
+  // Explotación: mejor prior + bonus UCB para desempatar a favor de lo menos visto.
+  const bonus = 0.01 / (1 + visits);
   let mejor = candidatos[0] as BrainAction;
   let mejorPuntaje = Number.NEGATIVE_INFINITY;
   for (const accion of candidatos) {
-    const puntaje = priorEvaluado(brain, clave, accion, legal);
+    const puntaje = priorEvaluado(brain, clave, accion, legal) + bonus;
     // Desempate aleatorio: sin datos, ninguna acción merece ventaja previa.
     if (puntaje > mejorPuntaje || (puntaje === mejorPuntaje && Math.random() < 0.5)) {
       mejor = accion;
@@ -135,30 +166,64 @@ export function chooseBrainAction(brain: Brain, legal: BrainLegal, ctx: BrainCon
   return conTamano(mejor, legal);
 }
 
-/** Aprende de la mano: mueve el prior de la acción usada y decae epsilon. */
+/** Aprende de la mano: crédito total a TODA la actionHistory + decae epsilon. */
 export function reflectOnHand(
   brain: Brain,
   record: HandRecord,
 ): { brain: Brain; lesson?: Lesson } {
   const epsilonAntes = brain.epsilon;
-  const clave = claveSituacion(record);
-  const ultima = record.actionHistory[record.actionHistory.length - 1];
-  const parseo = ultima ? parsearAccion(ultima.action) : null;
+  const claveUltima = claveSituacion(record);
+  const historial = record.actionHistory.filter(
+    (a) => a.street !== "showdown" && a.street !== "done",
+  );
 
   const priors = { ...brain.priors };
-  let anterior = 0.5;
-  let nuevo = 0.5;
-  let cambio = 0;
-  if (parseo) {
-    const priorKey = `${clave}/${parseo.tipo}`;
-    anterior = priorConFallback(priors, clave, parseo.tipo);
-    nuevo = limitar(
-      redondear(anterior + (record.won ? SUBIDA : -BAJADA)),
-      PRIOR_MIN,
-      PRIOR_MAX,
-    );
-    cambio = Math.abs(nuevo - anterior);
+  // Magnitud V2: botes grandes enseñan más.
+  const magnitude =
+    0.5 + Math.min(1, Math.abs(record.stackDelta) / Math.max(50, record.potWon + 20));
+  const base = record.won ? STEP_WIN : STEP_LOSS;
+
+  let anteriorUltima = 0.5;
+  let nuevoUltimo = 0.5;
+  let cambioUltimo = 0;
+  let tipoUltimo: BrainAction["type"] | null = null;
+  let importeUltimo = 0;
+
+  const n = historial.length;
+  for (let i = 0; i < n; i++) {
+    const item = historial[i] as { street: string; action: string };
+    const d = n - 1 - i;
+    const discount = Math.pow(DESCUENTO, d);
+    const step = base * discount * magnitude;
+    // Clave de esta acción histórica (para la última, usa la clave oficial).
+    const esUltima = i === n - 1;
+    const claveAccion = esUltima ? claveUltima : claveParaAccion(item.street, item.action, record);
+    const parseo = parsearAccion(item.action);
+    if (!parseo) continue;
+    const priorKey = `${claveAccion}/${parseo.tipo}`;
+    const anterior = priorConFallback(priors, claveAccion, parseo.tipo);
+    const nuevo = limitar(redondear(anterior + step), PRIOR_MIN, PRIOR_MAX);
     priors[priorKey] = nuevo;
+    if (esUltima) {
+      anteriorUltima = anterior;
+      nuevoUltimo = nuevo;
+      cambioUltimo = Math.abs(nuevo - anterior);
+      tipoUltimo = parseo.tipo;
+      importeUltimo = parseo.importe;
+    }
+  }
+
+  // Contrapartida contrafactual: en la situación de la última acción,
+  // los tipos NO usados se mueven en -step*0.15 (si ganó la usada, bajan).
+  if (tipoUltimo && n > 0) {
+    const stepUltimo = base * 1 * magnitude; // d=0 → discount 1
+    const contra = -stepUltimo * CONTRA_PESO;
+    for (const tipo of TIPOS) {
+      if (tipo === tipoUltimo) continue;
+      const anterior = priorConFallback(priors, claveUltima, tipo as BrainAction["type"]);
+      const nuevo = limitar(redondear(anterior + contra), PRIOR_MIN, PRIOR_MAX);
+      priors[`${claveUltima}/${tipo}`] = nuevo;
+    }
   }
 
   let epsilon = Math.max(EPSILON_MIN, redondear(epsilonAntes * EPSILON_DECAY, 6));
@@ -168,24 +233,26 @@ export function reflectOnHand(
   const primeraMano = brain.handsPlayed === 0;
   const cruzoUmbral = UMBRALES_EPSILON.some((t) => epsilonAntes > t && epsilon <= t);
   let lesson: Lesson | undefined;
-  if (parseo && (primeraMano || cambio > 0.02 || cruzoUmbral)) {
+  if (tipoUltimo && (primeraMano || cambioUltimo > 0.02 || cruzoUmbral)) {
     lesson = crearLesson({
-      clave,
-      tipo: parseo.tipo,
-      importe: parseo.importe,
+      clave: claveUltima,
+      tipo: tipoUltimo,
+      importe: importeUltimo,
       record,
-      anterior,
-      nuevo,
+      anterior: anteriorUltima,
+      nuevo: nuevoUltimo,
       handsPlayed,
+      magnitude,
+      actionsCredited: n,
     });
     lessonsAcum.push(lesson);
   }
   // Capa lecciones a las últimas 100.
   const lessons = lessonsAcum.slice(-MAX_LESSONS);
 
-  // Contador por situación.
+  // Contador por situación (clave de la última acción).
   const counts: Record<string, number> = { ...(brain.counts ?? {}) };
-  counts[clave] = (counts[clave] ?? 0) + 1;
+  counts[claveUltima] = (counts[claveUltima] ?? 0) + 1;
 
   // Re-anneal simple: si lleva muchas manos y gana poco, re-explora.
   if (handsPlayed > 110 && lessons.length > 0) {
@@ -205,8 +272,8 @@ export function reflectOnHand(
   };
 }
 
-/** Prior con compat: prueba clave nueva (HU/multi) y cae a vieja y a 0.5. */
-function priorConFallback(
+/** Prior con fallback V2: directa → quita stack (precio→cubo + rivales) → vieja → 0.5. */
+export function priorConFallback(
   priors: Record<string, number>,
   clave: string,
   tipo: BrainAction["type"],
@@ -214,12 +281,46 @@ function priorConFallback(
   const directa = priors[`${clave}/${tipo}`];
   if (directa !== undefined) return directa;
   const partes = clave.split("/");
-  if (
-    partes.length === 3 &&
-    (partes[2] === "HU" || partes[2] === "multi")
-  ) {
-    const vieja = priors[`${partes[0]}/${partes[1]}/${tipo}`];
+  if (partes.length === 4) {
+    // Rica: calle/precio/stack/rivales → calle/cubo/rivales.
+    const [calle, precio, , rival] = partes as [string, string, string, string];
+    const cubo = precio === "free" ? "toCall0" : "hasPot";
+    // cheap/pricey → hasPot; free → toCall0. También cubre precio ya viejo.
+    const cuboReal =
+      precio === "toCall0" || precio === "hasPot" ? precio : cubo;
+    const conRivales = priors[`${calle}/${cuboReal}/${rival}/${tipo}`];
+    if (conRivales !== undefined) return conRivales;
+    const vieja = priors[`${calle}/${cuboReal}/${tipo}`];
     if (vieja !== undefined) return vieja;
+    return 0.5;
+  }
+  if (partes.length === 3) {
+    const [calle, segundo, tercero] = partes as [string, string, string];
+    const esCubo = segundo === "toCall0" || segundo === "hasPot";
+    const esPrecio = segundo === "free" || segundo === "cheap" || segundo === "pricey";
+    const esRival = tercero === "HU" || tercero === "multi";
+    const esStack = tercero === "short" || tercero === "mid" || tercero === "deep";
+    if (esCubo && esRival) {
+      const vieja = priors[`${calle}/${segundo}/${tipo}`];
+      if (vieja !== undefined) return vieja;
+      return 0.5;
+    }
+    if (esPrecio && (esRival || esStack)) {
+      const cubo = segundo === "free" ? "toCall0" : "hasPot";
+      if (esRival) {
+        const conRiv = priors[`${calle}/${cubo}/${tercero}/${tipo}`];
+        if (conRiv !== undefined) return conRiv;
+      }
+      const vieja = priors[`${calle}/${cubo}/${tipo}`];
+      if (vieja !== undefined) return vieja;
+      return 0.5;
+    }
+    if (esCubo) {
+      const vieja = priors[`${calle}/${segundo}/${tipo}`];
+      if (vieja !== undefined) return vieja;
+      return 0.5;
+    }
+    return 0.5;
   }
   return 0.5;
 }
@@ -264,6 +365,8 @@ interface LessonDatos {
   anterior: number;
   nuevo: number;
   handsPlayed: number;
+  magnitude?: number;
+  actionsCredited?: number;
 }
 
 function crearLesson(datos: LessonDatos): Lesson {
@@ -286,6 +389,10 @@ function crearLesson(datos: LessonDatos): Lesson {
     change,
     handsPlayed,
     ts,
+    ...(typeof datos.magnitude === "number" ? { magnitude: datos.magnitude } : {}),
+    ...(typeof datos.actionsCredited === "number"
+      ? { actionsCredited: datos.actionsCredited }
+      : {}),
   };
 }
 
@@ -336,3 +443,5 @@ function redondear(x: number, decimales = 3): number {
   const f = 10 ** decimales;
   return Math.round(x * f) / f;
 }
+
+

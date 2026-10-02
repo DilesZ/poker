@@ -131,10 +131,14 @@ export function AgentDiary({
   code,
   lesson,
   handId,
+  brainMeta,
+  dreaming,
 }: {
   code: string;
   lesson?: string;
   handId?: number | string;
+  brainMeta?: { handsPlayed?: number; epsilon?: number; lessonsCount?: number } | null;
+  dreaming?: boolean;
 }) {
   const [entradas, setEntradas] = useState<Entrada[]>(() => leer(code));
   const entradasRef = useRef<Entrada[]>(entradas);
@@ -178,6 +182,13 @@ export function AgentDiary({
       <p className="poker-muted">
         El agente empieza sin estrategia y aprende de cada mano.
       </p>
+      {brainMeta ? (
+        <p className="diary-meta">
+          🧠 {brainMeta.handsPlayed ?? 0} manos · ε{" "}
+          {(brainMeta.epsilon ?? 0).toFixed(2)} · {brainMeta.lessonsCount ?? 0} lecciones
+        </p>
+      ) : null}
+      {dreaming ? <button disabled>Soñando...</button> : null}
       {esStale ? (
         <p className="diary-vacio">Agente observando...</p>
       ) : inverso.length === 0 ? (

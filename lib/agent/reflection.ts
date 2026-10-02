@@ -2,20 +2,42 @@
 // claves de situación. La clave es el puente entre lo que decide el cerebro
 // (claveDesdeContexto) y lo que aprende tras la mano (claveSituacion): ambas
 // deben devolver lo mismo para que el aprendizaje se transfiera.
+//
+// V2 (CEREBRO rico): la clave nueva es `calle/precio/stack/rivales` donde
+// precio=free|cheap|pricey, stack=short|mid|deep, rivales=HU|multi.
+// Por compat, cuando no hay dato de rivales se devuelve la clave vieja
+// `calle/cubo` (toCall0/hasPot), así los registros viejos siguen aprendiendo.
 import type { BrainAction, BrainContext, HandRecord } from "./brain";
 
 /** Cubo de situación: "toCall0" (decisión sin precio) o "hasPot" (hay precio). */
 export type Cubo = "toCall0" | "hasPot";
 
+/** Precio V2: free (toCall==0) | cheap (price<0.3) | pricey. */
+export type Precio = "free" | "cheap" | "pricey";
+/** Stack V2: short(<200) | mid(<600) | deep. */
+export type StackBucket = "short" | "mid" | "deep";
+/** Rivales V2: HU(<=1) | multi. */
+export type RivalBucket = "HU" | "multi";
+
 const CUBOS: readonly Cubo[] = ["toCall0", "hasPot"];
 const CALLES = ["preflop", "flop", "turn", "river"] as const;
 const RIVALES = ["HU", "multi"] as const;
+const PRECIOS: readonly Precio[] = ["free", "cheap", "pricey"];
+const STACKS: readonly StackBucket[] = ["short", "mid", "deep"];
 
-/** Ruleta: 8 claves base (compat) + 16 con rivales (HU/multi). */
+/** Ruleta: 8 claves base (compat) + 16 con rivales (HU/multi) + 72 ricas V2.
+ * Total distintas 96 (8+16+72). El enunciado pedía 104 (8+24+72) pero 24
+ * cuenta doble las 8 viejas (8+16=24 viejas en total); el total distinto
+ * correcto es 96. Se mantienen las 8 viejas y las 16 con rivales por compat. */
 export const RULETA_SITUACIONES: readonly string[] = [
   ...CALLES.flatMap((calle) => CUBOS.map((cubo) => `${calle}/${cubo}`)),
   ...CALLES.flatMap((calle) =>
     CUBOS.flatMap((cubo) => RIVALES.map((r) => `${calle}/${cubo}/${r}`)),
+  ),
+  ...CALLES.flatMap((calle) =>
+    PRECIOS.flatMap((precio) =>
+      STACKS.flatMap((stack) => RIVALES.map((r) => `${calle}/${precio}/${stack}/${r}`)),
+    ),
   ),
 ];
 
@@ -64,30 +86,116 @@ export function buildHandRecord(datos: HandRecordInput): HandRecord {
   };
 }
 
+/** Bucket de precio V2: free si toCall==0, cheap si price<0.3, pricey si no. */
+export function bucketPrecio(toCall: number, pot: number): Precio {
+  if (toCall <= 0) return "free";
+  const price = toCall / (pot + toCall);
+  return price < 0.3 ? "cheap" : "pricey";
+}
+
+/** Bucket de stack V2: short(<200) | mid(<600) | deep. */
+export function bucketStack(stack: number): StackBucket {
+  if (stack < 200) return "short";
+  if (stack < 600) return "mid";
+  return "deep";
+}
+
 /** Sufijo de rivales: "" (compat, sin dato), "/HU" (≤1 rival) o "/multi". */
 function sufijoRivales(numRivales?: number): string {
   if (typeof numRivales !== "number") return "";
   return numRivales <= 1 ? "/HU" : "/multi";
 }
 
-/** Clave de situación desde el registro: última decisión + su cubo de precio. */
+/** Stack global del record: mid si no hay dato, si no bucket de delta+pot. */
+export function stackDeRecord(record: HandRecord): StackBucket {
+  if (record.potWon === 0 && record.stackDelta === 0) return "mid";
+  return bucketStack(record.stackDelta + record.potWon);
+}
+
+/** Precio de una acción histórica (para crédito total y claveSituacion rica).
+ * call/fold → cheap/pricey según potWon/importe (pricey si no hay dato);
+ * check → free; raise/allin con "(precio" → cheap/pricey (pricey si no hay
+ * pot para calcular), sin precio → free (apertura). */
+export function precioDeAccionHistorica(
+  actionText: string,
+  record: HandRecord,
+): Precio {
+  const parseo = parsearAccion(actionText);
+  if (!parseo) return "free";
+  if (parseo.tipo === "check") return "free";
+  if (parseo.tipo === "call" || parseo.tipo === "fold") {
+    if (record.potWon === 0 && record.stackDelta === 0) return "pricey";
+    const importe = parseo.importe;
+    if (importe > 0 && record.potWon > 0) return bucketPrecio(importe, record.potWon);
+    if (record.stackDelta !== 0 && record.potWon > 0)
+      return bucketPrecio(Math.abs(record.stackDelta), record.potWon);
+    // "toCall grande → pricey si no cheap": sin pot, umbral 50.
+    if (importe > 0) return importe > 50 ? "pricey" : "cheap";
+    return "pricey";
+  }
+  // raise / allin
+  if (actionText.includes("(precio")) {
+    const m = actionText.match(/\(precio\s+(\d+)/);
+    const precioVal = m ? Number.parseInt(m[1] ?? "", 10) : NaN;
+    if (Number.isFinite(precioVal) && (precioVal as number) > 0) {
+      if (record.potWon > 0) return bucketPrecio(precioVal as number, record.potWon);
+      return "pricey";
+    }
+    return "pricey";
+  }
+  return "free";
+}
+
+/** Clave rica por acción (para crédito total): calle/precio/stack/rivales.
+ * Si no hay numRivales, devuelve clave vieja calle/cubo por compat. */
+export function claveParaAccion(
+  streetAccion: string,
+  actionText: string,
+  record: HandRecord,
+): string {
+  const calle = normalizarCalle(streetAccion);
+  if (typeof record.numRivales !== "number") {
+    return `${calle}/${cuboDeTexto(actionText)}`;
+  }
+  const precio = precioDeAccionHistorica(actionText, record);
+  const stack = stackDeRecord(record);
+  const rival = record.numRivales <= 1 ? "HU" : "multi";
+  return `${calle}/${precio}/${stack}/${rival}`;
+}
+
+/** Clave de situación desde el registro: última decisión + su cubo de precio.
+ * Sin numRivales → vieja `calle/cubo` (compat). Con rivales → rica V2
+ * `calle/precio/stack/rivales`. */
 export function claveSituacion(record: HandRecord): string {
   const historial = record.actionHistory.filter(
     (a) => a.street !== "showdown" && a.street !== "done",
   );
   const ultima = historial[historial.length - 1];
   const calle = normalizarCalle(ultima?.street ?? record.street);
-  const sufijo = sufijoRivales(record.numRivales);
-  if (!ultima) return `${calle}/toCall0${sufijo}`;
-  const enCalle = historial.filter((a) => a.street === ultima.street);
-  return `${calle}/${cuboDe(enCalle)}${sufijo}`;
+  if (typeof record.numRivales !== "number") {
+    if (!ultima) return `${calle}/toCall0`;
+    const enCalle = historial.filter((a) => a.street === ultima.street);
+    return `${calle}/${cuboDe(enCalle)}`;
+  }
+  const rival = record.numRivales <= 1 ? "HU" : "multi";
+  const stack = stackDeRecord(record);
+  if (!ultima) return `${calle}/free/${stack}/${rival}`;
+  const precio = precioDeAccionHistorica(ultima.action, record);
+  return `${calle}/${precio}/${stack}/${rival}`;
 }
 
-/** Clave de situación en caliente: mismo cubo, derivado del precio enfrentado. */
+/** Clave de situación en caliente: mismo cubo, derivado del precio enfrentado.
+ * Sin numRivales → vieja `calle/cubo` (compat). Con rivales → rica V2. */
 export function claveDesdeContexto(ctx: BrainContext): string {
   const calle = normalizarCalle(ctx.street);
-  const cubo: Cubo = ctx.toCall > 0 ? "hasPot" : "toCall0";
-  return `${calle}/${cubo}${sufijoRivales(ctx.numRivales)}`;
+  if (typeof ctx.numRivales !== "number") {
+    const cubo: Cubo = ctx.toCall > 0 ? "hasPot" : "toCall0";
+    return `${calle}/${cubo}`;
+  }
+  const precio = bucketPrecio(ctx.toCall, ctx.pot);
+  const stack = bucketStack(ctx.myStack);
+  const rival = ctx.numRivales <= 1 ? "HU" : "multi";
+  return `${calle}/${precio}/${stack}/${rival}`;
 }
 
 /** Parsea una acción registrada ("raise 120 (precio 40)") a tipo e importe. */
@@ -112,6 +220,16 @@ function cuboDe(acciones: { action: string }[]): Cubo {
   if (parseo.tipo === "check") return "toCall0";
   // raise/allin sin precio declarado: apertura si es la primera acción de la calle.
   return acciones.length > 1 ? "hasPot" : "toCall0";
+}
+
+/** Cubo de un texto de acción aislado (para crédito viejo sin rivales). */
+function cuboDeTexto(actionText: string): Cubo {
+  if (actionText.includes("(precio")) return "hasPot";
+  const parseo = parsearAccion(actionText);
+  if (!parseo) return "toCall0";
+  if (parseo.tipo === "call" || parseo.tipo === "fold") return "hasPot";
+  if (parseo.tipo === "check") return "toCall0";
+  return "toCall0";
 }
 
 function normalizarCalle(calle: string | undefined): string {

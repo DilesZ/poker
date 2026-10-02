@@ -1,4 +1,5 @@
 // Tests del cerebro autónomo (vitest). 4 casos: tabula rasa, sube, baja y epsilon.
+// V2: crédito total con magnitud (0.08/-0.06 * 0.8^d * magnitud). Test2: mag=0.5+90/200=0.95 step=0.076 → 0.576 (toFixed 0.58). Test3: mag=0.5+1=1.5 step=-0.09 → 0.41.
 import { describe, expect, it } from "vitest";
 import { chooseBrainAction, createBrain, reflectOnHand } from "./brain";
 import { buildHandRecord, RULETA_SITUACIONES } from "./reflection";
@@ -50,7 +51,7 @@ describe("brain", () => {
     const { brain: aprendido, lesson } = reflectOnHand(brain, record);
 
     expect(aprendido.handsPlayed).toBe(1);
-    expect(aprendido.priors["flop/hasPot/call"]).toBeCloseTo(0.55, 6);
+    expect(aprendido.priors["flop/hasPot/call"]).toBeCloseTo(0.576, 6);
     // Inmutable: el cerebro original no se toca.
     expect(brain.priors["flop/hasPot/call"]).toBe(0.5);
     expect(brain.handsPlayed).toBe(0);
@@ -59,7 +60,7 @@ describe("brain", () => {
     expect(lesson?.outcome).toBe("victoria");
     expect(lesson?.situation).toContain("call 60 en flop");
     expect(lesson?.insight).toContain("gané el bote");
-    expect(lesson?.change).toBe("subí a 0.55 la prior de llamar en flop");
+    expect(lesson?.change).toBe("subí a 0.58 la prior de llamar en flop");
     expect(aprendido.lessons).toHaveLength(1);
   });
 
@@ -77,10 +78,10 @@ describe("brain", () => {
     const { brain: aprendido, lesson } = reflectOnHand(brain, record);
 
     // Apertura de bote sin precio: clave flop/toCall0 (sin marcador "(precio").
-    expect(aprendido.priors["flop/toCall0/raise"]).toBeCloseTo(0.46, 6);
+    expect(aprendido.priors["flop/toCall0/raise"]).toBeCloseTo(0.41, 6);
     expect(aprendido.handsPlayed).toBe(1);
     expect(lesson?.outcome).toBe("derrota");
-    expect(lesson?.change).toBe("bajé a 0.46 la prior de subir en flop");
+    expect(lesson?.change).toBe("bajé a 0.41 la prior de subir en flop");
     expect(lesson?.handsPlayed).toBe(1);
   });
 

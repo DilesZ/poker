@@ -30,11 +30,19 @@ export interface StrategyVersion {
   tightness: number;
   /** Compat panel entrenar: 0-1 (0 pasivo … 1 agresivo). */
   aggression: number;
+  /** Momentum de thresholds por posición (v2, opcional para compat). */
+  thresholdMomentum?: Record<TablePosition, number>;
+  /** Momentum de sizing por fracción (v2, opcional para compat). */
+  sizingMomentum?: Record<"33" | "50" | "75", number>;
 }
 
 export const STRATEGY_STORAGE_KEY = "poker-strategy";
 export const STRATEGY_VERSION = 1;
 export const RANGE_SIZE = 169;
+
+/** Learning rate base v2 (6 updates/mano). Big-pot = base + 0.04. */
+export const LR_BASE = 0.08;
+export const LR_BIGPOT = 0.12;
 
 function clip01(x: number): number {
   if (!Number.isFinite(x)) return 0.5;
@@ -54,6 +62,14 @@ function defaultThresholds(): Record<TablePosition, number> {
   };
 }
 
+function defaultThresholdMomentum(): Record<TablePosition, number> {
+  return { BTN: 0, SB: 0, BB: 0, EP: 0, MP: 0, CO: 0 };
+}
+
+function defaultSizingMomentum(): Record<"33" | "50" | "75", number> {
+  return { "33": 0, "50": 0, "75": 0 };
+}
+
 /** Estrategia por defecto v1. No mutar directamente: usar cloneStrategy(). */
 export const DEFAULT_STRATEGY: StrategyVersion = {
   version: STRATEGY_VERSION,
@@ -62,6 +78,8 @@ export const DEFAULT_STRATEGY: StrategyVersion = {
   sizingWeights: { "33": 0.3, "50": 0.5, "75": 0.2 },
   tightness: 0.5,
   aggression: 0.5,
+  thresholdMomentum: defaultThresholdMomentum(),
+  sizingMomentum: defaultSizingMomentum(),
 };
 
 /** Clona profundo (para no mutar DEFAULT ni el input de selfplay). */
@@ -73,6 +91,8 @@ export function cloneStrategy(s: StrategyVersion): StrategyVersion {
     sizingWeights: { ...s.sizingWeights },
     tightness: s.tightness,
     aggression: s.aggression,
+    thresholdMomentum: { ...(s.thresholdMomentum ?? defaultThresholdMomentum()) },
+    sizingMomentum: { ...(s.sizingMomentum ?? defaultSizingMomentum()) },
   };
 }
 
@@ -145,6 +165,31 @@ export function migrate(raw: unknown): StrategyVersion {
         out.sizingWeights["75"] /= s2;
       }
     }
+  }
+
+  // Momentum v2: opcional, preserva si válido, default 0 (compat con payloads viejos).
+  if (isRecord(raw["thresholdMomentum"])) {
+    const tm = raw["thresholdMomentum"] as Record<string, unknown>;
+    const base = defaultThresholdMomentum();
+    for (const pos of TABLE_POSITIONS) {
+      const v = tm[pos];
+      base[pos] = typeof v === "number" && Number.isFinite(v) ? v : 0;
+    }
+    out.thresholdMomentum = base;
+  } else {
+    out.thresholdMomentum = defaultThresholdMomentum();
+  }
+
+  if (isRecord(raw["sizingMomentum"])) {
+    const sm = raw["sizingMomentum"] as Record<string, unknown>;
+    const base = defaultSizingMomentum();
+    for (const k of ["33", "50", "75"] as const) {
+      const v = sm[k];
+      base[k] = typeof v === "number" && Number.isFinite(v) ? v : 0;
+    }
+    out.sizingMomentum = base;
+  } else {
+    out.sizingMomentum = defaultSizingMomentum();
   }
 
   return out;

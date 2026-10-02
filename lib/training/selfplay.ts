@@ -7,12 +7,14 @@ import { getAiAction } from "../poker/ai";
 import type { AiAction } from "../poker/ai";
 import { evaluate7 } from "../poker/evaluator";
 import type { Card } from "../poker/types";
-import { DEFAULT_STRATEGY, TABLE_POSITIONS, cloneStrategy } from "./strategy";
+import { DEFAULT_STRATEGY, LR_BASE, LR_BIGPOT, TABLE_POSITIONS, cloneStrategy } from "./strategy";
 import type { StrategyVersion, TablePosition } from "./strategy";
 import type { Experience } from "./experience";
 
-/** Learning rate del regret simple. */
+/** Learning rate del regret simple (legacy v1, conservado por compat). */
 export const SELFPLAY_LR = 0.05;
+/** Learning rate v2 (6 updates/mano, thresholds + sizing). */
+export const SELFPLAY_LR_V2 = 0.08;
 
 // Re-exporta el store de estrategia para el panel (única fuente en strategy.ts).
 export { DEFAULT_STRATEGY } from "./strategy";
@@ -194,14 +196,29 @@ export function estimateStrength(hole: Card[], board: Card[]): number {
   return clip01(0.12 + (r.category / 8) * 0.78 + ((top - 2) / 12) * 0.1);
 }
 
-/** Elige fracción de bote según sizingWeights (usa Math.random → seeded en runSelfPlay). */
-function pickSizingFraction(strategy: StrategyVersion): number {
+/** Traza de una decisión dentro de una mano (v2: 6 jugadores). */
+export interface DecisionTrace {
+  pos: TablePosition;
+  handIdx: number;
+  action: string;
+  strength: number;
+  toCall: number;
+  pot: number;
+  /** Solo para action==="bet": amount apostado (para sizing). */
+  amount?: number;
+}
+
+/** Elige fracción de bote según sizingWeights (rng inyectable, default Math.random). */
+export function pickSizingFraction(
+  strategy: StrategyVersion,
+  rng: () => number = Math.random,
+): number {
   const w33 = Math.max(0, strategy.sizingWeights["33"] ?? 0);
   const w50 = Math.max(0, strategy.sizingWeights["50"] ?? 0);
   const w75 = Math.max(0, strategy.sizingWeights["75"] ?? 0);
   const sum = w33 + w50 + w75;
   if (!(sum > 0)) return 0.5;
-  const r = Math.random() * sum;
+  const r = rng() * sum;
   if (r < w33) return 0.33;
   if (r < w33 + w50) return 0.5;
   return 0.75;
@@ -249,16 +266,56 @@ function zeroByPosition(): Record<TablePosition, number> {
   return { BTN: 0, SB: 0, BB: 0, EP: 0, MP: 0, CO: 0 };
 }
 
+function clipThr(x: number): number {
+  if (!Number.isFinite(x)) return 0.5;
+  if (x < 0.3) return 0.3;
+  if (x > 0.75) return 0.75;
+  return x;
+}
+
+function renormalizeSizing(sw: { "33": number; "50": number; "75": number }): void {
+  // Clip a >=0 y renormaliza a suma 1 (fallback a default si suma inválida).
+  let a = Math.max(0, sw["33"] ?? 0);
+  let b = Math.max(0, sw["50"] ?? 0);
+  let c = Math.max(0, sw["75"] ?? 0);
+  let sum = a + b + c;
+  if (!(sum > 0) || !Number.isFinite(sum)) {
+    sw["33"] = 0.3;
+    sw["50"] = 0.5;
+    sw["75"] = 0.2;
+    return;
+  }
+  sw["33"] = a / sum;
+  sw["50"] = b / sum;
+  sw["75"] = c / sum;
+}
+
+function closestSizingKey(ratio: number): "33" | "50" | "75" {
+  const d33 = Math.abs(ratio - 0.33);
+  const d50 = Math.abs(ratio - 0.5);
+  const d75 = Math.abs(ratio - 0.75);
+  if (d33 <= d50 && d33 <= d75) return "33";
+  if (d50 <= d75) return "50";
+  return "75";
+}
+
 /**
- * Corre nHands manos headless.
+ * Corre nHands manos headless (v2: aprendizaje x10).
  * Sobrecargas:
  * - runSelfPlay(nHands, seed, strategy?) → corrida determinista (tests/training).
  * - runSelfPlay(nHands, strategy?) → seed wall-clock (panel UI).
  * - No toca React/DOM. Parchea Math.random con mulberry32(seed) durante la corrida
  *   (getAiAction y shuffle usan Math.random) y lo restaura al salir.
  * - No muta la estrategia de entrada: trabaja sobre un clon y devuelve updatedStrategy.
- * - Reward en bb (bb=20): (stackFinalHeroe - 1000) / 20.
- * - Update regret simple por mano: w[idx] += LR * clamp(rewardBB/20, -1, 1), clip 0-1.
+ * - Reward en bb (bb=20): (stackFinal - 1000) / 20 por jugador; nR=clamp(rewardBB/20,-1,1).
+ * - Update v2 por mano (6x + thresholds + sizing):
+ *   range (6 updates, uno por jugador con su handIdx):
+ *     w += (LR_BASE + (|rewardBB|>10 ? 0.04 : 0)) * nR * (fold&&reward>0 ? 1.2 : 1), clip 0-1.
+ *   thresholds (por posición con ≥1 muestra):
+ *     thr -= 0.015*nR_avg, clip 0.3-0.75; mom = 0.9*mom + 0.1*nR_avg.
+ *   sizing (si ganador usó bet con frac f más cercana a amount/pot):
+ *     w[f] += 0.03*nR, renormaliza a suma 1.
+ * Antes (v1): 1 update/mano (solo héroe, LR 0.05). Ahora: 6 + thresholds + sizing.
  */
 export function runSelfPlay(nHands: number, strategy?: StrategyVersion): SelfPlayResult;
 export function runSelfPlay(nHands: number, seed: number, strategy?: StrategyVersion): SelfPlayResult;
@@ -314,10 +371,17 @@ export function runSelfPlay(
       deal(state);
       refreshPot(state);
 
-      const hero = state.players[0];
-      const heroHole: Card[] = [...hero.hole];
+      const heroHole: Card[] = [...(state.players[0]?.hole ?? [])];
       const heroPos = positionOfSeat(0, button, NUM_PLAYERS);
       let heroLastAction = "check";
+
+      // Traza v2 por jugador: una entrada por decisión (pos/handIdx/action/strength/toCall/pot).
+      // Se registra para los 6 (coste acotado: arrays pequeños por mano) y se actualiza TODOs al final.
+      const handIdxs: number[] = state.players.map((pl) => handClassIndex(pl.hole));
+      const seatPos: TablePosition[] = state.players.map((pl) =>
+        positionOfSeat(pl.id, button, NUM_PLAYERS),
+      );
+      const traces: DecisionTrace[][] = Array.from({ length: NUM_PLAYERS }, () => []);
 
       // Inversión por calle (blinds ya cuentan en preflop).
       let invested = new Array<number>(NUM_PLAYERS).fill(0);
@@ -330,6 +394,12 @@ export function runSelfPlay(
       let reachedShowdown = false;
       const streets = ["preflop", "flop", "turn", "river"] as const;
 
+      // Cache postflop (si>=1): hole+board fijos por calle, evaluate7 caro.
+      // Preflop (si=0) heurística barata → sin cache para no añadir overhead.
+      const strengthCache: (number | undefined)[][] = Array.from(
+        { length: NUM_PLAYERS },
+        () => [undefined, undefined, undefined, undefined],
+      );
       for (let si = 0; si < streets.length && !handOver; si++) {
         // Rondas de apuesta (máx 3 pasadas por calle para responder a raises).
         for (let pass = 0; pass < 3 && !handOver; pass++) {
@@ -339,15 +409,39 @@ export function runSelfPlay(
             const idx = (button + startOffset + k) % NUM_PLAYERS;
             const p = state.players[idx];
             if (!p || p.folded || p.allIn) continue;
-            const active = state.players.filter((q) => !q.folded);
-            if (active.length <= 1) {
+            let activeCount = 0;
+            for (const q of state.players) if (!q.folded) activeCount++;
+            if (activeCount <= 1) {
               handOver = true;
               break;
             }
             const toCall = Math.max(0, state.currentBet - (invested[p.id] ?? 0));
-            const strength = estimateStrength(p.hole, state.board);
-            const pos = positionOfSeat(p.id, button, NUM_PLAYERS);
+            let strength: number;
+            if (si === 0) {
+              strength = estimateStrength(p.hole, state.board);
+            } else {
+              const cached = strengthCache[p.id]?.[si];
+              if (cached !== undefined) {
+                strength = cached;
+              } else {
+                strength = estimateStrength(p.hole, state.board);
+                const row = strengthCache[p.id];
+                if (row) row[si] = strength;
+              }
+            }
+            const pos = seatPos[p.id] ?? positionOfSeat(p.id, button, NUM_PLAYERS);
             const act = decideWithStrategy(strength, toCall, state.pot, p.stack, BB, pos, working);
+            // Traza por decisión (los 6 jugadores).
+            const entry: DecisionTrace = {
+              pos,
+              handIdx: handIdxs[p.id] ?? 84,
+              action: act.action,
+              strength,
+              toCall,
+              pot: state.pot,
+            };
+            if (act.action === "bet") entry.amount = act.amount;
+            traces[p.id]?.push(entry);
             if (p.id === 0) heroLastAction = act.action;
 
             if (act.action === "fold") {
@@ -439,11 +533,84 @@ export function runSelfPlay(
         rewardBB,
       });
 
-      // Regret simple sobre la clase de mano del héroe.
-      const idx = handClassIndex(heroHole);
-      const delta = SELFPLAY_LR * clamp(rewardBB / 20, -1, 1);
-      const cur = working.rangeWeights[idx] ?? 0.5;
-      working.rangeWeights[idx] = clip01(cur + delta);
+      // ---- Aprendizaje v2: 6 updates/mano + thresholds + sizing ----
+      // Rewards por jugador en bb + normalizado nR=clamp(rewardBB/20,-1,1).
+      const rewardBBs: number[] = state.players.map(
+        (pl) => ((pl?.stack ?? STARTING_STACK) - STARTING_STACK) / BB,
+      );
+      const nRs: number[] = rewardBBs.map((r) => clamp(r / 20, -1, 1));
+
+      // 1) RangeWeights: un update por jugador con su propio handIdx.
+      //    w += (LR_BASE + (|rewardBB|>10 ? 0.04 : 0)) * nR * (fold&&reward>0 ? 1.2 : 1), clip 0-1.
+      //    v1 hacía 1 update/mano (solo héroe, LR 0.05); v2 hace 6/mano con LR_BASE 0.08.
+      for (let i = 0; i < NUM_PLAYERS; i++) {
+        const rBB = rewardBBs[i] ?? 0;
+        const nR = nRs[i] ?? 0;
+        const lastAct = traces[i]?.[traces[i].length - 1]?.action ?? "check";
+        // LR_BIGPOT (0.12) = LR_BASE (0.08) + 0.04 en botes grandes.
+        const lr = Math.abs(rBB) > 10 ? LR_BIGPOT : LR_BASE;
+        const mult = lastAct === "fold" && rBB > 0 ? 1.2 : 1;
+        const d = lr * nR * mult;
+        const hi = handIdxs[i] ?? 84;
+        working.rangeWeights[hi] = clip01((working.rangeWeights[hi] ?? 0.5) + d);
+      }
+
+      // 2) Thresholds por posición: thr -= 0.015*nR_avg (gana→afloja, pierde→aprieta), clip 0.3-0.75.
+      //    Momentum: mom = 0.9*mom + 0.1*nR_avg.
+      if (!working.thresholdMomentum) {
+        working.thresholdMomentum = { BTN: 0, SB: 0, BB: 0, EP: 0, MP: 0, CO: 0 };
+      }
+      if (!working.sizingMomentum) {
+        working.sizingMomentum = { "33": 0, "50": 0, "75": 0 };
+      }
+      for (const pos of TABLE_POSITIONS) {
+        let sum = 0;
+        let cnt = 0;
+        for (let i = 0; i < NUM_PLAYERS; i++) {
+          if (seatPos[i] === pos) {
+            sum += nRs[i] ?? 0;
+            cnt++;
+          }
+        }
+        if (cnt < 1) continue;
+        const avg = sum / cnt;
+        const cur = working.pushFoldThresholds[pos] ?? 0.55;
+        working.pushFoldThresholds[pos] = clipThr(cur - 0.015 * avg);
+        const m = working.thresholdMomentum[pos] ?? 0;
+        working.thresholdMomentum[pos] = 0.9 * m + 0.1 * avg;
+      }
+
+      // 3) Sizing: si el ganador usó bet con frac f (más cercana a amount/pot),
+      //    w[f] += 0.03*nR y renormaliza a suma 1.
+      let winnerIds: number[] = [];
+      if (state.winners && state.winners.length > 0) {
+        winnerIds = [...state.winners];
+      } else if (survivors.length === 1 && survivors[0]) {
+        winnerIds = [survivors[0].id];
+      } else if (survivors.length > 1) {
+        winnerIds = survivors.map((s) => s.id);
+      }
+      winnerIds = [...new Set(winnerIds)];
+      for (const wid of winnerIds) {
+        const nR = nRs[wid] ?? 0;
+        const wTrace = traces[wid] ?? [];
+        let lastBet: DecisionTrace | undefined;
+        for (let t = wTrace.length - 1; t >= 0; t--) {
+          const e = wTrace[t];
+          if (e && e.action === "bet" && typeof e.amount === "number" && e.pot > 0) {
+            lastBet = e;
+            break;
+          }
+        }
+        if (!lastBet) continue;
+        const ratio = (lastBet.amount ?? 0) / (lastBet.pot || 1);
+        if (!Number.isFinite(ratio)) continue;
+        const key = closestSizingKey(ratio);
+        working.sizingWeights[key] = (working.sizingWeights[key] ?? 0) + 0.03 * nR;
+        working.sizingMomentum[key] = 0.9 * (working.sizingMomentum[key] ?? 0) + 0.1 * nR;
+        renormalizeSizing(working.sizingWeights);
+      }
+      void heroHole;
     }
 
     const byPosition = zeroByPosition();

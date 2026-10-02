@@ -22,6 +22,8 @@ export interface RoomView {
   actingSeat?: number;
   handOver?: boolean;
   winnerText?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  brainMeta?: any;
 }
 
 const BASE = "/api/rooms";

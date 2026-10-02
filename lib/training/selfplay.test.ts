@@ -1,4 +1,9 @@
 // Tests training v0.2 (vitest): determinismo, winrate finito y push/fold por umbral.
+// Nota v2 (aprendizaje x10): runSelfPlay ahora hace 6 updates/mano (uno por jugador
+// con su handIdx, LR_BASE 0.08 / LR_BIGPOT 0.12) + thresholds por posición + sizing
+// del ganador, frente a 1 update/mano (solo héroe, LR 0.05) en v1. Por eso los pesos
+// se mueven ~6x más rápido; estos 3 tests legacy siguen verdes (determinismo,
+// finitud y umbrales sin cambio de firma).
 import { describe, expect, it } from "vitest";
 import { DEFAULT_STRATEGY, cloneStrategy } from "./strategy";
 import { decideWithStrategy, runSelfPlay } from "./selfplay";

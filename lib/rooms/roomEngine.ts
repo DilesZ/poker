@@ -7,6 +7,8 @@ import {
   type BrainContext,
   type BrainLegal,
 } from "../agent/brain";
+import { loadGlobalBrain, mergeBrains, saveGlobalBrain } from "../agent/memory";
+import { dreamConsolidate } from "../agent/dream";
 import { buildHandRecord, type AccionMano } from "../agent/reflection";
 import { newDeck, shuffle } from "../poker/deck";
 import { advanceStreet, deal, handName, refreshPot, showdown } from "../poker/game";
@@ -29,6 +31,8 @@ export interface EstadoSalas extends GameState {
   showdownFinal?: boolean;
   /** Límite de turno (ms epoch). Se renueva al cambiar el turno. */
   deadlineActing?: number;
+  /** Stats de rivales para futuro exploit: VPIP por asiento. */
+  opponentStats?: { vPip: Record<number, number>; manos: Record<number, number> };
 }
 
 /** Ventana de turno: 30s por decisión. */
@@ -105,6 +109,32 @@ export function podar(room: Room): void {
 
 /** Reparte una mano nueva con los presentes (agente incluido). */
 export function iniciarMano(room: Room): void {
+  // Memoria global: si la sala es fresca, hidrata desde el cerebro global.
+  try {
+    if (room.brain.handsPlayed === 0) {
+      const g = loadGlobalBrain();
+      if (g) {
+        room.brain = mergeBrains(g, room.brain);
+        room.agentMemoryVersion = 2;
+      }
+    }
+  } catch {
+    // best-effort: una sala nueva siempre puede repartir
+  }
+  try {
+    // Import dinámico best-effort para calentar la caché en el navegador.
+    void import("../agent/memory")
+      .then((m) => {
+        try {
+          m.loadGlobalBrain();
+        } catch {
+          // best-effort
+        }
+      })
+      .catch(() => {});
+  } catch {
+    // SSR/tests sin import dinámico
+  }
   const participantes = [...room.players].sort((a, b) => a.seat - b.seat);
   if (participantes.length < 2) return;
   const previo = estadoDe(room);
@@ -127,6 +157,7 @@ export function iniciarMano(room: Room): void {
     button: trasBoton.id,
     street: "preflop",
     stackInicioAgente: players.find((p) => p.id === previo.agentSeat)?.stack,
+    ...(previo.opponentStats ? { opponentStats: previo.opponentStats } : {}),
   };
   postearCiegas(nuevo);
   deal(nuevo);
@@ -247,6 +278,16 @@ export function reflejar(room: Room): string | undefined {
     const l = resultado.lesson;
     room.lesson = `${l.situation}: ${l.insight} (${l.change})`;
   }
+  try {
+    room.brain = dreamConsolidate(room.brain, registro, 120);
+  } catch {
+    // best-effort: el sueño nunca rompe la reflexión real
+  }
+  try {
+    saveGlobalBrain(room.brain);
+  } catch {
+    // best-effort
+  }
   return room.lesson;
 }
 
@@ -335,6 +376,11 @@ export function construirVista(room: Room, clientId?: string): RoomView {
     actingSeat: jugando ? calcularActingSeat(e) : undefined,
     handOver: e.iniciada === true && e.street === "done",
     winnerText: e.ganadorTexto,
+    brainMeta: {
+      handsPlayed: room.brain.handsPlayed,
+      epsilon: room.brain.epsilon,
+      lessonsCount: room.brain.lessons.length,
+    },
   };
 }
 
@@ -380,6 +426,12 @@ function aplicarUna(e: EstadoSalas, p: PlayerState, accion: AccionSala): void {
     e.acted = [p.id];
   } else if (!e.acted?.includes(p.id)) {
     e.acted = [...(e.acted ?? []), p.id];
+  }
+
+  if (!e.opponentStats) e.opponentStats = { vPip: {}, manos: {} };
+  e.opponentStats.manos[p.id] = (e.opponentStats.manos[p.id] ?? 0) + 1;
+  if (tipo === "call" || tipo === "raise" || tipo === "allin") {
+    e.opponentStats.vPip[p.id] = (e.opponentStats.vPip[p.id] ?? 0) + 1;
   }
 
   if (p.id === e.agentSeat && e.historial) {

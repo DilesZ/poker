@@ -18,10 +18,15 @@ export interface AiParams {
 }
 
 /** Apuesta 50-75% del bote, limitada por stack. */
-function valueBet(pot: number, stack: number, toCall: number): AiAction {
+export function valueBet(
+  pot: number,
+  stack: number,
+  toCall: number,
+  rng: () => number = Math.random,
+): AiAction {
   const room = Math.max(0, stack - toCall);
   if (room <= 0) return { action: "all-in", amount: stack };
-  const frac = 0.5 + Math.random() * 0.25; // 50-75%
+  const frac = 0.5 + rng() * 0.25; // 50-75%
   const amount = Math.min(room, Math.max(1, Math.round(pot * frac)));
   if (amount >= room) return { action: "all-in", amount: stack };
   return { action: "bet", amount };
@@ -34,6 +39,7 @@ export function getAiAction(
   pot: number,
   stack: number,
   bb = 20,
+  rng: () => number = Math.random,
 ): AiAction {
   const s = Math.min(1, Math.max(0, strength));
   const call = Math.max(0, Math.floor(toCall));
@@ -47,21 +53,21 @@ export function getAiAction(
   }
 
   // 15% jugada aleatoria: no juega perfecto.
-  if (Math.random() < 0.15) {
-    if (free) return Math.random() < 0.5 ? { action: "check" } : valueBet(pot, stack, 0);
-    return Math.random() < 0.5 ? { action: "fold" } : { action: "call", amount: Math.min(call, stack) };
+  if (rng() < 0.15) {
+    if (free) return rng() < 0.5 ? { action: "check" } : valueBet(pot, stack, 0, rng);
+    return rng() < 0.5 ? { action: "fold" } : { action: "call", amount: Math.min(call, stack) };
   }
 
   // Sin apuesta previa: check con manos flojas, value bet con fuerza.
   if (free) {
-    if (s > 0.65) return valueBet(pot, stack, 0);
-    if (s > 0.4 && Math.random() < 0.3) return valueBet(pot, stack, 0);
+    if (s > 0.65) return valueBet(pot, stack, 0, rng);
+    if (s > 0.4 && rng() < 0.3) return valueBet(pot, stack, 0, rng);
     return { action: "check" };
   }
 
   // Frente a apuesta: compara fuerza con precio (pot odds implícitos).
   const price = call / (pot + call);
   if (s < 0.25 && s < price) return { action: "fold" };
-  if (s > 0.8) return valueBet(pot, stack, call); // raise 50-75% pot
+  if (s > 0.8) return valueBet(pot, stack, call, rng); // raise 50-75% pot
   return { action: "call", amount: Math.min(call, stack) };
 }

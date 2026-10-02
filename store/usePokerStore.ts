@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { getAiAction } from "../lib/poker/ai";
+import { calcEquity } from "../lib/poker/equity";
 import { CATEGORY_NAMES, evaluate7 } from "../lib/poker/evaluator";
 import {
   advanceStreet,
@@ -124,40 +125,60 @@ function estimateStrength(hole: Card[], board: Card[]): number {
 }
 
 /** Los 5 villanos responden con la IA heurística. Mutación sobre `g`. */
-function playVillains(g: GameState, log: string[]): void {
+function playVillains(g: GameState, log: string[], stats?: RegistroManos): void {
+  // Exploit adaptativo por VPIP del héroe (mesa adaptativa).
+  const manos = stats?.manosTotales ?? 0;
+  const vpip = manos > 0 ? (stats?.vpipCount ?? 0) / manos : 0;
+  let exploit = 0;
+  if (manos > 0) {
+    if (vpip > 0.45) exploit = 0.04; // explotan overplay: pagan más ligero
+    else if (vpip < 0.15) exploit = -0.03; // respetan nit: foldean más
+  }
+  const exTag = exploit !== 0 ? `,ex:${exploit >= 0 ? "+" : ""}${exploit.toFixed(2)}` : "";
+  const oppCount = Math.max(1, activeVillains(g));
   for (const v of g.players) {
     if (v.id === 0 || v.folded || v.allIn) continue;
     const call = Math.max(0, g.currentBet - v.bet);
-    // Fuerza real: evaluator + heurística preflop, con bonus de posición.
+    // Fuerza real: postflop (>=3 board) equity Monte Carlo cap 150 iters; si no, heurística local.
+    let base: number;
+    if (g.board.length >= 3) {
+      try {
+        base = calcEquity(v.hole, g.board, oppCount, 150);
+      } catch {
+        base = estimateStrength(v.hole, g.board);
+      }
+    } else {
+      base = estimateStrength(v.hole, g.board);
+    }
+    // Bonus de posición + exploit adaptativo.
     const pos = (v.id - g.button + 6) % 6;
     const posBonus = pos >= 4 ? 0.03 : pos === 0 ? -0.02 : 0;
-    const base = estimateStrength(v.hole, g.board);
-    const strength = Math.min(1, Math.max(0, base + posBonus));
+    const strength = Math.min(1, Math.max(0, base + posBonus + exploit));
     const eq = strength.toFixed(2);
     const decision = getAiAction(strength, call, g.pot, v.stack, BIG_BLIND);
     if (decision.action === "fold") {
       v.folded = true;
-      log.push(`${v.name} foldea (eq:${eq}).`);
+      log.push(`${v.name} foldea (eq:${eq}${exTag}).`);
     } else if (decision.action === "check") {
-      log.push(`${v.name} pasa (eq:${eq}).`);
+      log.push(`${v.name} pasa (eq:${eq}${exTag}).`);
     } else if (decision.action === "call") {
       const pay = Math.min(v.stack, decision.amount);
       v.stack -= pay;
       v.bet += pay;
       if (v.stack === 0) v.allIn = true;
-      log.push(`${v.name} iguala ${pay} (eq:${eq}).`);
+      log.push(`${v.name} iguala ${pay} (eq:${eq}${exTag}).`);
     } else if (decision.action === "bet") {
       const pay = Math.min(v.stack, call + decision.amount);
       v.stack -= pay;
       v.bet += pay;
       if (v.stack === 0) v.allIn = true;
-      log.push(`${v.name} sube a ${v.bet} (+${pay}, eq:${eq}).`);
+      log.push(`${v.name} sube a ${v.bet} (+${pay}, eq:${eq}${exTag}).`);
     } else {
       const pay = v.stack;
       v.stack = 0;
       v.bet += pay;
       v.allIn = true;
-      log.push(`${v.name} va ALL-IN (${v.bet}, eq:${eq}).`);
+      log.push(`${v.name} va ALL-IN (${v.bet}, eq:${eq}${exTag}).`);
     }
   }
   refreshPot(g);
@@ -306,7 +327,7 @@ export const usePokerStore = create<PokerStore>()((set, get) => ({
     }
     refreshPot(g);
     g.currentBet = Math.max(0, ...g.players.map((p) => p.bet));
-    playVillains(g, nextLog);
+    playVillains(g, nextLog, stats);
     if (activeVillains(g) === 0) {
       heroTakesPot(g, nextLog);
       const endStats = commitResult(stats, "V", h.bet);
@@ -339,7 +360,7 @@ export const usePokerStore = create<PokerStore>()((set, get) => ({
     const nextLog = [...log, `Hero sube a ${h.bet} (+${pay}).`];
     refreshPot(g);
     g.currentBet = Math.max(0, ...g.players.map((p) => p.bet));
-    playVillains(g, nextLog);
+    playVillains(g, nextLog, stats);
     if (activeVillains(g) === 0) {
       heroTakesPot(g, nextLog);
       const endStats = commitResult(stats, "V", h.bet);
